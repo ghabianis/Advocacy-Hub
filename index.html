@@ -1828,9 +1828,9 @@
         let workTimerLunchMinutes = 0;
         let workTimerInterval = null;
         let workTimerAutoLogging = false;
-        const MAX_WORK_SECONDS = 8 * 60 * 60;
+        const MAX_WORK_SECONDS = 9 * 60 * 60;
         window._inlineEditId = null; // track which note is being edited (null = new)
-
+        let _personalCache = null;
         // ──────────────────────────────────────────────────────────────
         // 3. TOAST
         // ──────────────────────────────────────────────────────────────
@@ -1861,6 +1861,8 @@
         function NavigateToHome() {
             window.location.href('https://cc03-2c0f-f3a0-122-62a5-6459-a148-93ae.ngrok-free.app/')
         }
+
+
 
         // ──────────────────────────────────────────────────────────────
         // 4. AUTH
@@ -1910,6 +1912,7 @@
                 currentUser = data.user;
                 showToast(`Welcome ${currentUser.email}!`, 'success');
                 await afterAuth();
+                await initMyWork();
                 return true;
             } catch (err) {
                 await Swal.fire({
@@ -2270,6 +2273,238 @@
             const chars = content.length;
             document.getElementById('wordCount').textContent = words;
             document.getElementById('charCount').textContent = chars;
+        }
+        // --------------------------------------------
+        // 1. Helper: get the current user ID
+        // --------------------------------------------
+        function getUserId() {
+            return currentUser?.id;
+        }
+
+        // --------------------------------------------
+        // 2. Load all personal data from Supabase
+        // --------------------------------------------
+        async function loadPersonalDataFromSupabase() {
+            const userId = getUserId();
+            if (!userId) return null;
+
+            const [
+                { data: captures, error: e1 },
+                { data: followups, error: e2 },
+                { data: journal, error: e3 },
+                { data: content, error: e4 },
+                { data: templates, error: e5 },
+                { data: knowledge, error: e6 }
+            ] = await Promise.all([
+                supabaseClient.from('personal_captures').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+                supabaseClient.from('personal_followups').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+                supabaseClient.from('personal_journal_entries').select('*').eq('user_id', userId).order('date', { ascending: false }),
+                supabaseClient.from('personal_content_plans').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+                supabaseClient.from('personal_templates').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+                supabaseClient.from('personal_knowledge').select('*').eq('user_id', userId).order('created_at', { ascending: false })
+            ]);
+
+            if (e1 || e2 || e3 || e4 || e5 || e6) {
+                console.warn('Error loading personal data from Supabase', { e1, e2, e3, e4, e5, e6 });
+                // Fallback to localStorage if available
+                return loadPersonalDataFromLocalStorage();
+            }
+
+            return {
+                captures: captures || [],
+                followUps: followups || [],
+                journal: journal || [],
+                content: content || [],
+                templates: templates || [],
+                knowledge: knowledge || []
+            };
+        }
+
+        async function refreshPersonalCache() {
+            _personalCache = await loadPersonalDataFromSupabase();
+            return _personalCache;
+        }
+
+        function getPersonalCache() {
+            return _personalCache || { captures: [], followUps: [], journal: [], content: [], templates: [], knowledge: [] };
+        }
+
+        async function addCapture(type, text) {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_captures')
+                .insert([{ user_id: userId, type, text }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.captures.unshift(data);
+            renderMyWork();
+            showToast('Capture saved', 'success');
+        }
+
+        async function addFollowUpSupabase(person, topic, due) {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_followups')
+                .insert([{ user_id: userId, person, topic, due, done: false }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.followUps.unshift(data);
+            renderMyWork();
+            showToast('Follow‑up added', 'success');
+        }
+
+        async function toggleFollowUpDone(id, done) {
+            const { error } = await supabaseClient
+                .from('personal_followups')
+                .update({ done })
+                .eq('id', id)
+                .eq('user_id', getUserId());
+            if (error) { showToast(error.message, 'error'); return; }
+            const item = _personalCache.followUps.find(f => f.id === id);
+            if (item) item.done = done;
+            renderMyWork();
+        }
+
+        async function addJournalEntry(date, text, auto = false) {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_journal_entries')
+                .insert([{ user_id: userId, date, text, auto }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.journal.unshift(data);
+            renderMyWork();
+            showToast('Journal entry saved', 'success');
+        }
+
+        async function addContentPlanSupabase(title, type, date, status = 'idea') {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_content_plans')
+                .insert([{ user_id: userId, title, type, date, status }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.content.unshift(data);
+            renderMyWork();
+            showToast('Content idea added', 'success');
+        }
+
+        async function addTemplateSupabase(name, body) {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_templates')
+                .insert([{ user_id: userId, name, body }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.templates.unshift(data);
+            renderMyWork();
+            showToast('Template added', 'success');
+        }
+
+        async function addKnowledgeSupabase(title, url) {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_knowledge')
+                .insert([{ user_id: userId, title, url }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.knowledge.unshift(data);
+            renderMyWork();
+            showToast('Knowledge link saved', 'success');
+        }
+
+        async function recordAutomaticJournalSupabase(hours, activity) {
+            const today = new Date().toISOString().slice(0, 10);
+            const text = `Time logged\n${Number(hours).toFixed(1)}h logged on ${activity || 'work'}`;
+            // Check if there's already an auto entry for today
+            const existing = _personalCache.journal.find(
+                entry => entry.date === today && entry.auto === true
+            );
+            if (existing) {
+                // Append to existing entry
+                const updatedText = existing.text + `\n${text}`;
+                const { error } = await supabaseClient
+                    .from('personal_journal_entries')
+                    .update({ text: updatedText })
+                    .eq('id', existing.id)
+                    .eq('user_id', getUserId());
+                if (!error) {
+                    existing.text = updatedText;
+                }
+            } else {
+                await addJournalEntry(today, text, true);
+            }
+        }
+
+        window.saveQuickCapture = async function () {
+            const input = document.getElementById('captureText');
+            if (!input?.value.trim()) return;
+            const type = document.getElementById('captureType').value;
+            await addCapture(type, input.value.trim());
+            input.value = '';
+        };
+
+        window.addFollowUp = async function () {
+            const person = prompt('Person or company');
+            if (!person?.trim()) return;
+            const topic = prompt('Follow-up topic');
+            if (!topic?.trim()) return;
+            const due = prompt('Due date (optional)', '');
+            await addFollowUpSupabase(person.trim(), topic.trim(), due);
+        };
+
+        window.completeFollowUp = async function (id) {
+            const item = _personalCache.followUps.find(f => f.id === id);
+            if (!item) return;
+            await toggleFollowUpDone(id, !item.done);
+        };
+
+        window.saveJournalEntry = async function () {
+            const input = document.getElementById('journalEntry');
+            if (!input?.value.trim()) return;
+            const today = new Date().toISOString().slice(0, 10);
+            await addJournalEntry(today, input.value.trim());
+            input.value = '';
+        };
+
+        window.addContentPlan = async function () {
+            const title = prompt('Title or idea');
+            if (!title?.trim()) return;
+            const type = prompt('Type: article, tutorial, talk, video, or social', 'article') || 'article';
+            const date = prompt('Target date (optional)', '');
+            await addContentPlanSupabase(title.trim(), type.trim(), date);
+        };
+
+        window.addPersonalTemplate = async function () {
+            const name = prompt('Template name');
+            if (!name?.trim()) return;
+            const body = prompt('Template prompts or structure', 'Context:\nNext action:') || '';
+            await addTemplateSupabase(name.trim(), body);
+        };
+
+        window.addKnowledgeItem = async function () {
+            const title = prompt('Reference title');
+            if (!title?.trim()) return;
+            const url = prompt('URL');
+            if (!url?.trim()) return;
+            await addKnowledgeSupabase(title.trim(), url.trim());
+        };
+
+        async function initMyWork() {
+            await refreshPersonalCache();
+            renderMyWork();
         }
 
         // Auto‑update stats on input
@@ -4957,7 +5192,7 @@
             try {
                 const { error } = await supabaseClient.from('time_entries').insert([payload]);
                 if (error) throw error;
-                recordAutomaticJournal(hours, workTask.title);
+                await recordAutomaticJournal(hours, workTask.title);
                 showToast(automatic ? '8-hour workday logged automatically' : `Logged ${hours.toFixed(1)} hours for today`, 'success');
                 workTimerRunning = false;
                 workTimerPaused = false;
@@ -5044,19 +5279,31 @@
             localStorage.setItem(personalStorageKey(), JSON.stringify(personalData));
         }
 
-        function recordAutomaticJournal(hours, activity) {
-            const data = loadPersonalData();
-            const label = `${Number(hours).toFixed(1)}h logged on ${activity || 'work'}`;
-            const existing = data.journal.find(item => item.date === todayDate() && item.auto);
-            if (existing) existing.text = `${existing.text.split('\n')[0]}\n${label}`;
-            else data.journal.push({ date: todayDate(), text: `Time logged\n${label}`, auto: true });
-            savePersonalData();
+        async function recordAutomaticJournal(hours, activity) {
+                await recordAutomaticJournalSupabase(hours, activity);
         }
 
         function todayDate() { return new Date().toISOString().slice(0, 10); }
 
+        /*************  ✨ Windsurf Command ⭐  *************/
+        /**
+         * Renders the 'My Work' page, which includes:
+         * - Today's tasks, meetings, and time entries
+         * - Unfinished tasks sorted by priority and due date
+         * - Time logged this week
+         * - Follow-ups to revisit
+         * - Personal content planning
+         * - Captured ideas
+         * - Follow-ups
+         * - Activity breakdown for the last 30 days
+         * - Upcoming meetings
+         * - Overdue tasks
+         * - Personal templates for content creation
+         * - Knowledge base of useful documentation, tools, and references
+         */
+        /*******  21960f94-d17e-4a3c-8965-38e968593fe9  *******/
         function renderMyWork() {
-            const data = loadPersonalData();
+            const data = getPersonalCache();
             const now = new Date();
             const today = todayDate();
             const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay());
@@ -5088,28 +5335,17 @@
             document.getElementById('myWorkQueue').innerHTML = queue.map(task => `<div class="flex items-start gap-3 p-2 border-b border-gray-100"><i class="fas fa-grip-lines text-gray-300 mt-1"></i><div class="flex-1 min-w-0"><div class="text-sm font-medium text-gray-800 truncate">${escHtml(task.title)}</div><div class="text-xs text-gray-400 mt-1">${escHtml(task.description || 'No next action')} ${task.due_date ? `· due ${task.due_date}` : ''}</div></div><span class="text-[10px] uppercase text-${task.priority === 'high' || task.priority === 'urgent' ? 'rose' : 'gray'}-500">${escHtml(task.priority || 'next')}</span></div>`).join('') || '<div class="text-sm text-gray-400 py-3">Your queue is clear.</div>';
             document.getElementById('contentPlannerList').innerHTML = data.content.slice().reverse().map(item => `<div class="flex items-center gap-2 p-2 border-b border-gray-100"><i class="fas fa-${item.type === 'video' ? 'video' : item.type === 'talk' ? 'microphone' : 'pen-nib'} text-orange-500"></i><div class="flex-1"><div class="text-sm font-medium">${escHtml(item.title)}</div><div class="text-xs text-gray-400">${escHtml(item.type)} · ${escHtml(item.status)}${item.date ? ` · ${item.date}` : ''}</div></div></div>`).join('') || '<div class="text-sm text-gray-400 py-3">Plan your next article, tutorial, talk, video, or social post.</div>';
             document.getElementById('captureList').innerHTML = data.captures.slice(-5).reverse().map(item => `<div class="text-xs p-2 rounded bg-gray-50"><span class="font-semibold text-emerald-600">${escHtml(item.type)}</span> ${escHtml(item.text)}</div>`).join('');
-            document.getElementById('followUpList').innerHTML = data.followUps.slice().reverse().map((item, index) => `<div class="flex gap-2 items-start"><button onclick="completeFollowUp(${data.followUps.length - 1 - index})" class="mt-0.5 text-${item.done ? 'emerald' : 'gray'}-400"><i class="fas fa-${item.done ? 'check-circle' : 'circle'}"></i></button><div class="min-w-0"><div class="text-sm ${item.done ? 'line-through text-gray-400' : 'text-gray-700'}">${escHtml(item.person)} · ${escHtml(item.topic)}</div><div class="text-xs text-gray-400">${item.due || 'No due date'}</div></div></div>`).join('') || '<div class="text-sm text-gray-400">No follow-ups tracked.</div>';
+            document.getElementById('followUpList').innerHTML = data.followUps.slice().reverse().map(item => `<div class="flex gap-2 items-start"><button onclick="completeFollowUp('${item.id}')" ...`)            
             document.getElementById('journalHistory').innerHTML = data.journal.slice(-3).reverse().map(item => `<div class="border-t border-gray-100 pt-2"><div class="text-xs text-gray-400">${item.date}</div><div class="text-sm text-gray-600 whitespace-pre-line">${escHtml(item.text)}</div></div>`).join('');
             document.getElementById('personalAnalytics').innerHTML = topActivities.map(([label, hours]) => `<div><div class="flex justify-between text-xs mb-1"><span>${escHtml(label)}</span><span>${hours.toFixed(1)}h</span></div><div class="h-2 bg-gray-100 rounded"><div class="h-2 bg-cyan-500 rounded" style="width:${Math.min(100, hours / Math.max(1, weekHours) * 100)}%"></div></div></div>`).join('') || '<div class="text-sm text-gray-400">Log time to see your activity breakdown.</div>';
             document.getElementById('weeklyReviewLabel').textContent = `${weekStart.toLocaleDateString()} - ${new Date(weekEnd - 1).toLocaleDateString()}`;
             document.getElementById('weeklyReview').innerHTML = `<div class="text-sm"><i class="fas fa-exclamation-circle text-rose-500 mr-2"></i>${overdue.length} overdue task${overdue.length === 1 ? '' : 's'}</div><div class="text-sm"><i class="fas fa-calendar text-blue-500 mr-2"></i>${upcoming.length} upcoming meeting${upcoming.length === 1 ? '' : 's'}</div><div class="text-sm"><i class="fas fa-list-check text-indigo-500 mr-2"></i>${unfinished.length} unfinished task${unfinished.length === 1 ? '' : 's'}</div><div class="text-sm"><i class="fas fa-flag text-orange-500 mr-2"></i>${data.followUps.filter(item => !item.done).length} follow-up${data.followUps.filter(item => !item.done).length === 1 ? '' : 's'} to revisit</div>`;
-            document.getElementById('personalTemplates').innerHTML = data.templates.map((item, index) => `<button onclick="usePersonalTemplate(${index})" class="w-full text-left flex items-center gap-2 p-2 rounded hover:bg-amber-50"><i class="fas fa-file-lines text-amber-500"></i><span class="text-sm">${escHtml(item.name)}</span></button>`).join('');
+            document.getElementById('personalTemplates').innerHTML = data.templates.map(item => `<button onclick="usePersonalTemplate('${item.id}')" ...`)            
             document.getElementById('knowledgeBase').innerHTML = data.knowledge.slice().reverse().map(item => `<a href="${escHtml(item.url)}" target="_blank" class="flex items-center gap-2 p-2 rounded hover:bg-sky-50"><i class="fas fa-link text-sky-500"></i><span class="text-sm truncate">${escHtml(item.title)}</span></a>`).join('') || '<div class="text-sm text-gray-400">Save useful documentation, tools, and references here.</div>';
         }
 
         window.openQuickCapture = function () { document.getElementById('captureText')?.focus(); };
-        window.saveQuickCapture = function () {
-            const input = document.getElementById('captureText');
-            if (!input?.value.trim()) return;
-            const data = loadPersonalData(); data.captures.push({ type: document.getElementById('captureType').value, text: input.value.trim(), createdAt: new Date().toISOString() }); savePersonalData(); input.value = ''; renderMyWork(); showToast('Captured', 'success');
-        };
-        window.addContentPlan = function () { const title = prompt('Title or idea'); if (!title?.trim()) return; const type = prompt('Type: article, tutorial, talk, video, or social', 'article') || 'article'; const date = prompt('Target date (optional)', ''); const data = loadPersonalData(); data.content.push({ title: title.trim(), type: type.trim(), date, status: 'idea' }); savePersonalData(); renderMyWork(); };
-        window.addFollowUp = function () { const person = prompt('Person or company'); if (!person?.trim()) return; const topic = prompt('Follow-up topic'); if (!topic?.trim()) return; const due = prompt('Due date (optional)', ''); const data = loadPersonalData(); data.followUps.push({ person: person.trim(), topic: topic.trim(), due, done: false }); savePersonalData(); renderMyWork(); };
-        window.completeFollowUp = function (index) { const data = loadPersonalData(); if (data.followUps[index]) data.followUps[index].done = !data.followUps[index].done; savePersonalData(); renderMyWork(); };
-        window.saveJournalEntry = function () { const input = document.getElementById('journalEntry'); if (!input?.value.trim()) return; const data = loadPersonalData(); data.journal.push({ date: todayDate(), text: input.value.trim() }); savePersonalData(); input.value = ''; renderMyWork(); showToast('Journal entry saved', 'success'); };
-        window.addPersonalTemplate = function () { const name = prompt('Template name'); if (!name?.trim()) return; const body = prompt('Template prompts or structure', 'Context:\nNext action:') || ''; const data = loadPersonalData(); data.templates.push({ name: name.trim(), body }); savePersonalData(); renderMyWork(); };
-        window.usePersonalTemplate = function (index) { const item = loadPersonalData().templates[index]; if (!item) return; document.getElementById('captureText').value = item.body; document.getElementById('captureType').value = 'thought'; document.getElementById('captureText').focus(); };
-        window.addKnowledgeItem = function () { const title = prompt('Reference title'); if (!title?.trim()) return; const url = prompt('URL'); if (!url?.trim()) return; const data = loadPersonalData(); data.knowledge.push({ title: title.trim(), url: url.trim() }); savePersonalData(); renderMyWork(); };
+
         window.prepareMeeting = function (id) { const meeting = meetings.find(item => item.id === id); if (!meeting) return; navigateTo('notes'); window.openInlineEditor(); document.getElementById('noteTitle').value = `${meeting.title} - preparation`; document.getElementById('notePaper').innerHTML = `<h3>Agenda</h3><ul><li>Objective</li><li>Questions</li><li>Decisions</li><li>Follow-up actions</li></ul>`; };
         window.toggleMyWorkFocus = function () { document.body.classList.toggle('mywork-focus'); };
 
