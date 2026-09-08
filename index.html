@@ -209,6 +209,15 @@
                             <span class="work-time" id="workTimerDisplay">00:00:00</span>
                             <span class="text-xs text-gray-500" id="workTimerLunchInfo"></span>
                         </div>
+                        <div class="flex items-center gap-3 flex-wrap">
+                            <span class="work-label">
+                                <i class="fa fa-hourglass-half"></i> Expected Finish
+                            </span>
+
+                            <span class="work-time" id="exptectedFinish"></span>
+
+                            <span class="text-xs text-gray-500" id="timeUntilFinish"></span>
+                        </div>
                         <div class="text-xs text-gray-500 mt-1 flex items-center gap-1 flex-wrap"
                             id="workTimerStartInfoWrap">
                             <span id="workTimerStartInfo">Not started</span>
@@ -4897,9 +4906,65 @@
 
             const formatted = formatTime(seconds);
             const workDisplay = document.getElementById('workTimerDisplay');
+            const workDayExptectedFinish = document.getElementById('exptectedFinish');
+            const workEndTime = workTimerStartTime + 9 * 60 * 60 * 1000;
+            const workDayExpectedFinish = document.getElementById('exptectedFinish');
+            const timeUntilFinish = document.getElementById('timeUntilFinish');
+
+            if (workTimerStartTime) {
+                // Expected finish = 9 hours after start
+                const workEndTime = workTimerStartTime + 9 * 60 * 60 * 1000;
+
+                // Expected finish clock time
+                const formattedEndTime = new Date(workEndTime).toLocaleTimeString('en-GB', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+
+                if (workDayExpectedFinish) {
+                    workDayExpectedFinish.textContent = formattedEndTime;
+                }
+
+                // Time remaining
+                const remainingMs = workEndTime - Date.now();
+
+                if (timeUntilFinish) {
+                    if (remainingMs > 0) {
+                        const remainingSeconds = Math.floor(remainingMs / 1000);
+
+                        const hours = Math.floor(remainingSeconds / 3600);
+                        const minutes = Math.floor((remainingSeconds % 3600) / 60);
+                        const seconds = remainingSeconds % 60;
+
+                        timeUntilFinish.textContent =
+                            `(${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} left)`;
+                    } else {
+                        timeUntilFinish.textContent = '(Finished)';
+                    }
+                }
+            } else {
+                if (workDayExpectedFinish) {
+                    workDayExpectedFinish.textContent = '--:--:--';
+                }
+
+                if (timeUntilFinish) {
+                    timeUntilFinish.textContent = '';
+                }
+            }
+
+            const formattedEndTime = new Date(workEndTime).toLocaleTimeString('en-GB', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+
             if (workDisplay) workDisplay.textContent = formatted;
             const workDisplayLarge = document.getElementById('workTimerDisplayLarge');
-            if (workDisplayLarge) workDisplayLarge.textContent = formatted;
+            if (workDisplayLarge) {
+                workDisplayLarge.textContent = formatted;
+                workDayExptectedFinish.textContent = formattedEndTime;
+            }
 
             const statusEl = document.getElementById('workTimerStatus');
             const statusLarge = document.getElementById('workTimerStatusLarge');
@@ -5280,7 +5345,7 @@
         }
 
         async function recordAutomaticJournal(hours, activity) {
-                await recordAutomaticJournalSupabase(hours, activity);
+            await recordAutomaticJournalSupabase(hours, activity);
         }
 
         function todayDate() { return new Date().toISOString().slice(0, 10); }
@@ -5335,12 +5400,12 @@
             document.getElementById('myWorkQueue').innerHTML = queue.map(task => `<div class="flex items-start gap-3 p-2 border-b border-gray-100"><i class="fas fa-grip-lines text-gray-300 mt-1"></i><div class="flex-1 min-w-0"><div class="text-sm font-medium text-gray-800 truncate">${escHtml(task.title)}</div><div class="text-xs text-gray-400 mt-1">${escHtml(task.description || 'No next action')} ${task.due_date ? `· due ${task.due_date}` : ''}</div></div><span class="text-[10px] uppercase text-${task.priority === 'high' || task.priority === 'urgent' ? 'rose' : 'gray'}-500">${escHtml(task.priority || 'next')}</span></div>`).join('') || '<div class="text-sm text-gray-400 py-3">Your queue is clear.</div>';
             document.getElementById('contentPlannerList').innerHTML = data.content.slice().reverse().map(item => `<div class="flex items-center gap-2 p-2 border-b border-gray-100"><i class="fas fa-${item.type === 'video' ? 'video' : item.type === 'talk' ? 'microphone' : 'pen-nib'} text-orange-500"></i><div class="flex-1"><div class="text-sm font-medium">${escHtml(item.title)}</div><div class="text-xs text-gray-400">${escHtml(item.type)} · ${escHtml(item.status)}${item.date ? ` · ${item.date}` : ''}</div></div></div>`).join('') || '<div class="text-sm text-gray-400 py-3">Plan your next article, tutorial, talk, video, or social post.</div>';
             document.getElementById('captureList').innerHTML = data.captures.slice(-5).reverse().map(item => `<div class="text-xs p-2 rounded bg-gray-50"><span class="font-semibold text-emerald-600">${escHtml(item.type)}</span> ${escHtml(item.text)}</div>`).join('');
-            document.getElementById('followUpList').innerHTML = data.followUps.slice().reverse().map(item => `<div class="flex gap-2 items-start"><button onclick="completeFollowUp('${item.id}')" ...`)            
+            document.getElementById('followUpList').innerHTML = data.followUps.slice().reverse().map(item => `<div class="flex gap-2 items-start"><button onclick="completeFollowUp('${item.id}')" ...`)
             document.getElementById('journalHistory').innerHTML = data.journal.slice(-3).reverse().map(item => `<div class="border-t border-gray-100 pt-2"><div class="text-xs text-gray-400">${item.date}</div><div class="text-sm text-gray-600 whitespace-pre-line">${escHtml(item.text)}</div></div>`).join('');
             document.getElementById('personalAnalytics').innerHTML = topActivities.map(([label, hours]) => `<div><div class="flex justify-between text-xs mb-1"><span>${escHtml(label)}</span><span>${hours.toFixed(1)}h</span></div><div class="h-2 bg-gray-100 rounded"><div class="h-2 bg-cyan-500 rounded" style="width:${Math.min(100, hours / Math.max(1, weekHours) * 100)}%"></div></div></div>`).join('') || '<div class="text-sm text-gray-400">Log time to see your activity breakdown.</div>';
             document.getElementById('weeklyReviewLabel').textContent = `${weekStart.toLocaleDateString()} - ${new Date(weekEnd - 1).toLocaleDateString()}`;
             document.getElementById('weeklyReview').innerHTML = `<div class="text-sm"><i class="fas fa-exclamation-circle text-rose-500 mr-2"></i>${overdue.length} overdue task${overdue.length === 1 ? '' : 's'}</div><div class="text-sm"><i class="fas fa-calendar text-blue-500 mr-2"></i>${upcoming.length} upcoming meeting${upcoming.length === 1 ? '' : 's'}</div><div class="text-sm"><i class="fas fa-list-check text-indigo-500 mr-2"></i>${unfinished.length} unfinished task${unfinished.length === 1 ? '' : 's'}</div><div class="text-sm"><i class="fas fa-flag text-orange-500 mr-2"></i>${data.followUps.filter(item => !item.done).length} follow-up${data.followUps.filter(item => !item.done).length === 1 ? '' : 's'} to revisit</div>`;
-            document.getElementById('personalTemplates').innerHTML = data.templates.map(item => `<button onclick="usePersonalTemplate('${item.id}')" ...`)            
+            document.getElementById('personalTemplates').innerHTML = data.templates.map(item => `<button onclick="usePersonalTemplate('${item.id}')" ...`)
             document.getElementById('knowledgeBase').innerHTML = data.knowledge.slice().reverse().map(item => `<a href="${escHtml(item.url)}" target="_blank" class="flex items-center gap-2 p-2 rounded hover:bg-sky-50"><i class="fas fa-link text-sky-500"></i><span class="text-sm truncate">${escHtml(item.title)}</span></a>`).join('') || '<div class="text-sm text-gray-400">Save useful documentation, tools, and references here.</div>';
         }
 
