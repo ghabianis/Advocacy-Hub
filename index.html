@@ -317,7 +317,7 @@
                                 class="w-full text-left px-4 py-2.5 rounded-lg bg-rose-50 text-rose-700 text-sm font-medium hover:bg-rose-100 transition flex items-center gap-3"><i
                                     class="fas fa-pen"></i> Compose Email</button>
                             <button onclick="navigateTo('planner')"
-                                class="w-full text-left px-4 py-2.5 rounded-lg bg-orange-50 text-orange-700 text-sm font-medium hover:bg-orange-100 transition flex items-center gap-3"><i
+                                class="w-full text-left px-4 py-2.5 rounded-lg bg-orange-50 text-orange-700 text-sm font-medium hover:bg-orange-100 transition flex items-center gap-3 planner"><i
                                     class="fas fa-calendar-day"></i> Daily Planner</button>
                         </div>
                     </div>
@@ -339,7 +339,7 @@
                             class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm"><i
                                 class="fas fa-bolt mr-1"></i> Quick capture</button>
                         <button onclick="toggleMyWorkFocus()"
-                            class="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm"><i
+                            class="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm focusButton"><i
                                 class="fas fa-crosshairs mr-1"></i> Focus mode</button>
                     </div>
                 </div>
@@ -379,7 +379,7 @@
                             <h3 class="font-semibold text-gray-800 mb-3"><i
                                     class="fas fa-pen-nib text-emerald-500 mr-2"></i>Quick capture</h3>
                             <div class="flex gap-2 mb-2"><select id="captureType"
-                                    class="px-2 py-2 border border-gray-200 rounded-lg text-sm">
+                                    class="px-2 py-2 border border-gray-200 rounded-lg text-sm captureSelect">
                                     <option value="thought">Thought</option>
                                     <option value="link">Link</option>
                                     <option value="task">Task idea</option>
@@ -491,7 +491,7 @@
                         <div class="flex items-center justify-between mb-3"><span
                                 class="text-sm font-semibold text-gray-600 flex items-center gap-2"><span
                                     class="w-2 h-2 rounded-full bg-amber-400"></span> To Do</span><span
-                                class="text-xs bg-gray-200 text-gray-600 px-2.5 py-0.5 rounded-full"
+                                class="text-xs bg-gray-200 text-gray-600 px-2.5 py-0.5 rounded-full numbering"
                                 id="todoCount">0</span></div>
                         <div id="todoColumn" class="drop-zone space-y-2.5" data-status="todo"></div>
                     </div>
@@ -499,7 +499,7 @@
                         <div class="flex items-center justify-between mb-3"><span
                                 class="text-sm font-semibold text-gray-600 flex items-center gap-2"><span
                                     class="w-2 h-2 rounded-full bg-blue-400"></span> In Progress</span><span
-                                class="text-xs bg-gray-200 text-gray-600 px-2.5 py-0.5 rounded-full"
+                                class="text-xs bg-gray-200 text-gray-600 px-2.5 py-0.5 rounded-full numbering"
                                 id="progressCount">0</span></div>
                         <div id="progressColumn" class="drop-zone space-y-2.5" data-status="in-progress"></div>
                     </div>
@@ -507,7 +507,7 @@
                         <div class="flex items-center justify-between mb-3"><span
                                 class="text-sm font-semibold text-gray-600 flex items-center gap-2"><span
                                     class="w-2 h-2 rounded-full bg-purple-400"></span> In Review</span><span
-                                class="text-xs bg-gray-200 text-gray-600 px-2.5 py-0.5 rounded-full"
+                                class="text-xs bg-gray-200 text-gray-600 px-2.5 py-0.5 rounded-full numbering"
                                 id="reviewCount">0</span></div>
                         <div id="reviewColumn" class="drop-zone space-y-2.5" data-status="in-review"></div>
                     </div>
@@ -515,7 +515,7 @@
                         <div class="flex items-center justify-between mb-3"><span
                                 class="text-sm font-semibold text-gray-600 flex items-center gap-2"><span
                                     class="w-2 h-2 rounded-full bg-emerald-400"></span> Done</span><span
-                                class="text-xs bg-gray-200 text-gray-600 px-2.5 py-0.5 rounded-full"
+                                class="text-xs bg-gray-200 text-gray-600 px-2.5 py-0.5 rounded-full numbering"
                                 id="doneCount">0</span></div>
                         <div id="doneColumn" class="drop-zone space-y-2.5" data-status="done"></div>
                     </div>
@@ -649,7 +649,7 @@
                                     title="Align text center" onclick="applyFormat('justifyCenter')"><i
                                         class="fas fa-align-center"></i></button>
                                 <select id="fontSizeSelect" onchange="applyFormat('fontSize', this.value)"
-                                    class="px-2 py-1 border border-gray-200 rounded-md text-sm">
+                                    class="px-2 py-1 border border-gray-200 rounded-md text-sm fontSelector">
                                     <option value="">Font size</option>
                                     <option value="3">Small</option>
                                     <option value="4">Normal</option>
@@ -671,7 +671,7 @@
                             <div class="text-sm text-gray-500 mb-2">Note actions</div>
                             <div class="space-y-2">
                                 <button onclick="window.toggleInlineFocusMode()" id="focusBtn"
-                                    class="w-full px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm">Toggle
+                                    class="w-full px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm focusButton">Toggle
                                     Focus</button>
                                 <button onclick="window.saveInlineNote()" id="saveNoteBtn"
                                     class="w-full px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-sm">Save</button>
@@ -724,11 +724,11 @@
                     <h2 class="text-lg font-semibold text-gray-800">📅 Calendar</h2>
                     <div class="flex gap-2">
                         <button onclick="changeCalendarMonth(-1)"
-                            class="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition"><i
+                            class="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition leftArrow"><i
                                 class="fas fa-chevron-left"></i></button>
                         <span class="px-4 py-2 font-semibold text-sm" id="calendarMonthLabel">January 2024</span>
                         <button onclick="changeCalendarMonth(1)"
-                            class="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition"><i
+                            class="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition rightArrow"><i
                                 class="fas fa-chevron-right"></i></button>
                         <button onclick="changeCalendarMonth(0)"
                             class="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-sm transition">Today</button>
@@ -751,11 +751,11 @@
                     <h2 class="text-lg font-semibold text-gray-800">📋 Daily Planner</h2>
                     <div class="flex gap-2">
                         <button onclick="changePlannerDay(-1)"
-                            class="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition"><i
+                            class="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition leftArrow"><i
                                 class="fas fa-chevron-left"></i></button>
                         <span class="px-4 py-2 font-semibold text-sm" id="plannerDayLabel">Today</span>
                         <button onclick="changePlannerDay(1)"
-                            class="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition"><i
+                            class="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition rightArrow"><i
                                 class="fas fa-chevron-right"></i></button>
                         <button onclick="changePlannerDay(0)"
                             class="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-sm transition">Today</button>
@@ -1176,7 +1176,8 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" id="toolsList">
                     <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover">
                         <div class="flex items-center gap-3 mb-3">
-                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">📋
+                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">
+                                <img src="./assets/images/jira.png" />
                             </div>
                             <div>
                                 <div class="text-sm font-semibold text-gray-800">Jira</div>
@@ -1188,7 +1189,8 @@
                     </div>
                     <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover">
                         <div class="flex items-center gap-3 mb-3">
-                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">📊
+                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">
+                                <img src="./assets/images/slack.png" rounded-xl />
                             </div>
                             <div>
                                 <div class="text-sm font-semibold text-gray-800">Slack</div>
@@ -1200,7 +1202,8 @@
                     </div>
                     <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover">
                         <div class="flex items-center gap-3 mb-3">
-                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">📁
+                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">
+                                <img src="./assets/images/drive.png" rounded-xl />
                             </div>
                             <div>
                                 <div class="text-sm font-semibold text-gray-800">Google Drive</div>
@@ -1212,7 +1215,8 @@
                     </div>
                     <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover">
                         <div class="flex items-center gap-3 mb-3">
-                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">🐙
+                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">
+                                <img src="./assets/images/github.png" rounded-xl />
                             </div>
                             <div>
                                 <div class="text-sm font-semibold text-gray-800">GitHub</div>
@@ -1224,7 +1228,8 @@
                     </div>
                     <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover">
                         <div class="flex items-center gap-3 mb-3">
-                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">📅
+                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">
+                                <img src="./assets/images/calendy.png" rounded-xl />
                             </div>
                             <div>
                                 <div class="text-sm font-semibold text-gray-800">Calendly</div>
@@ -1236,7 +1241,8 @@
                     </div>
                     <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover">
                         <div class="flex items-center gap-3 mb-3">
-                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">🎥
+                            <div class="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-lg">
+                                <img src="./assets/images/zoom.png" rounded-xl />
                             </div>
                             <div>
                                 <div class="text-sm font-semibold text-gray-800">Zoom</div>
@@ -3747,7 +3753,7 @@
             meta.className = 'flex items-center gap-1 mt-2 flex-wrap';
             if (task.assignee) {
                 const sp = document.createElement('span');
-                sp.className = 'text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full';
+                sp.className = 'text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full naming';
                 sp.textContent = '👤 ' + task.assignee;
                 meta.appendChild(sp);
             }
@@ -3778,7 +3784,7 @@
             }
             tags.forEach(t => {
                 const sp = document.createElement('span');
-                sp.className = 'tag-badge bg-indigo-100 text-indigo-700';
+                sp.className = 'tag-badge bg-indigo-100 text-indigo-700 urgency';
                 sp.innerHTML = escHtml(t.trim());
                 meta.appendChild(sp);
             });
@@ -5261,7 +5267,7 @@
         task_id: workTask.id,
         user_id: currentUser.id,
         hours: parseFloat(hours.toFixed(2)),
-        description: `Work day (${workTimerLunchMinutes} min lunch)`,
+        description: `Work day (60 min lunch)`,
         created_at: new Date().toISOString()
     };
     try {

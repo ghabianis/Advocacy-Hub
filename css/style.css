@@ -1881,3 +1881,65 @@
         body.dark-mode .whiteboard-tool:hover {
             background: #4b5563 !important;
         }
+
+        body.dark-mode input {  
+            background: #4b5563 !important;
+        }
+
+        body.dark-mode textarea {
+            background: #4b5563 !important;
+        }
+
+        body.dark-mode button {
+            color: white !important;
+        }
+
+        body.dark-mode .focusButton {
+            background: #4f46e5 !important;
+            color: #fff !important;
+        }
+
+
+        body.dark-mode .captureSelect {
+            background: #4f46e5 !important;
+            color: #fff !important;
+        }
+
+        body.dark-mode .numbering {
+            background: #4f46e5 !important;
+            color: #fff !important;
+        }
+
+         body.dark-mode .naming {
+            background: #4f46e5 !important;
+            color: #fff !important;
+        }
+
+         body.dark-mode .urgency {
+            background: #ef4444 !important;
+            color: #fff !important;
+        }
+        body.dark-mode .focusButton {
+            background: #10b981 !important;
+            color: #fff !important;
+        }
+
+        body.dark-mode .fontSelector {
+            background: #374151 !important
+        }
+
+         body.dark-mode .leftArrow {
+            background: #374151 !important
+        }
+
+         body.dark-mode .rightArrow .planner {
+            background: #374151 !important
+        }
+
+
+        body.dark-mode .planner {
+            background: #374151 !important
+        }
+
+
+
