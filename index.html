@@ -4888,153 +4888,162 @@
         };
 
         function updateWorkTimerDisplays() {
-            let seconds = 0;
+    let seconds = 0;
 
-            if (workTimerRunning && workTimerStartTime) {
-                const elapsedMs = Date.now() - workTimerStartTime;
-                const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
-                seconds = Math.max(0, Math.floor((elapsedMs - lunchMs) / 1000));
-            } else if (workTimerPaused) {
-                const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
-                seconds = Math.max(0, Math.floor((workPausedElapsed - lunchMs) / 1000));
-            }
+    if (workTimerRunning && workTimerStartTime) {
+        const elapsedMs = Date.now() - workTimerStartTime;
+        const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
+        seconds = Math.max(0, Math.floor((elapsedMs - lunchMs) / 1000));
+    } else if (workTimerPaused) {
+        const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
+        seconds = Math.max(0, Math.floor((workPausedElapsed - lunchMs) / 1000));
+    }
 
-            if (workTimerRunning && seconds >= MAX_WORK_SECONDS && !workTimerAutoLogging) {
-                workTimerAutoLogging = true;
-                logWorkDay(true);
-            }
+    if (workTimerRunning && seconds >= MAX_WORK_SECONDS && !workTimerAutoLogging) {
+        workTimerAutoLogging = true;
+        logWorkDay(true);
+    }
 
-            const formatted = formatTime(seconds);
-            const workDisplay = document.getElementById('workTimerDisplay');
-            const workDayExptectedFinish = document.getElementById('exptectedFinish');
-            const workEndTime = workTimerStartTime + 9 * 60 * 60 * 1000;
-            const workDayExpectedFinish = document.getElementById('exptectedFinish');
-            const timeUntilFinish = document.getElementById('timeUntilFinish');
+    const formatted = formatTime(seconds);
+    const workDisplay = document.getElementById('workTimerDisplay');
+    const workDisplayLarge = document.getElementById('workTimerDisplayLarge');
+    if (workDisplay) workDisplay.textContent = formatted;
+    if (workDisplayLarge) workDisplayLarge.textContent = formatted;
 
-            if (workTimerStartTime) {
-                // Expected finish = 9 hours after start
-                const workEndTime = workTimerStartTime + 9 * 60 * 60 * 1000;
+    const statusEl = document.getElementById('workTimerStatus');
+    const statusLarge = document.getElementById('workTimerStatusLarge');
+    if (statusEl) {
+        statusEl.textContent = workTimerRunning ? 'Running' : workTimerPaused ? 'Paused' : 'Stopped';
+        statusEl.style.color = workTimerRunning ? '#16a34a' : workTimerPaused ? '#f59e0b' : '#6b7280';
+    }
+    if (statusLarge) {
+        statusLarge.textContent = workTimerRunning ? 'Running' : workTimerPaused ? 'Paused' : 'Stopped';
+        statusLarge.style.color = workTimerRunning ? '#16a34a' : workTimerPaused ? '#f59e0b' : '#6b7280';
+    }
 
-                // Expected finish clock time
-                const formattedEndTime = new Date(workEndTime).toLocaleTimeString('en-GB', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit'
-                });
+    const lunchInfo = document.getElementById('workTimerLunchInfo');
+    if (lunchInfo) {
+        lunchInfo.textContent = workTimerLunchMinutes > 0 ? `🍽️ ${workTimerLunchMinutes} min lunch deducted` : '';
+    }
 
-                if (workDayExpectedFinish) {
-                    workDayExpectedFinish.textContent = formattedEndTime;
-                }
-
-                // Time remaining
-                const remainingMs = workEndTime - Date.now();
-
-                if (timeUntilFinish) {
-                    if (remainingMs > 0) {
-                        const remainingSeconds = Math.floor(remainingMs / 1000);
-
-                        const hours = Math.floor(remainingSeconds / 3600);
-                        const minutes = Math.floor((remainingSeconds % 3600) / 60);
-                        const seconds = remainingSeconds % 60;
-
-                        timeUntilFinish.textContent =
-                            `(${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')} left)`;
-                    } else {
-                        timeUntilFinish.textContent = '(Finished)';
-                    }
-                }
-            } else {
-                if (workDayExpectedFinish) {
-                    workDayExpectedFinish.textContent = '--:--:--';
-                }
-
-                if (timeUntilFinish) {
-                    timeUntilFinish.textContent = '';
-                }
-            }
-
-            const formattedEndTime = new Date(workEndTime).toLocaleTimeString('en-GB', {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-            });
-
-            if (workDisplay) workDisplay.textContent = formatted;
-            const workDisplayLarge = document.getElementById('workTimerDisplayLarge');
-            if (workDisplayLarge) {
-                workDisplayLarge.textContent = formatted;
-                workDayExptectedFinish.textContent = formattedEndTime;
-            }
-
-            const statusEl = document.getElementById('workTimerStatus');
-            const statusLarge = document.getElementById('workTimerStatusLarge');
-            if (statusEl) {
-                statusEl.textContent = workTimerRunning ? 'Running' : workTimerPaused ? 'Paused' : 'Stopped';
-                statusEl.style.color = workTimerRunning ? '#16a34a' : workTimerPaused ? '#f59e0b' : '#6b7280';
-            }
-            if (statusLarge) {
-                statusLarge.textContent = workTimerRunning ? 'Running' : workTimerPaused ? 'Paused' : 'Stopped';
-                statusLarge.style.color = workTimerRunning ? '#16a34a' : workTimerPaused ? '#f59e0b' : '#6b7280';
-            }
-
-            const lunchInfo = document.getElementById('workTimerLunchInfo');
-            if (lunchInfo) {
-                lunchInfo.textContent = workTimerLunchMinutes > 0 ? `🍽️ ${workTimerLunchMinutes} min lunch deducted` : '';
-            }
-
-            const startInfo = document.getElementById('workTimerStartInfo');
-            if (startInfo) {
-                if (workTimerRunning && workTimerStartTime) {
-                    const startDate = new Date(workTimerStartTime);
-                    startInfo.textContent = `Started at ${startDate.toLocaleString()}`;
-                } else if (workTimerPaused && workTimerStartTime) {
-                    const startDate = new Date(workTimerStartTime);
-                    startInfo.textContent = `Paused · started at ${startDate.toLocaleString()}`;
-                } else {
-                    startInfo.textContent = 'Not started';
-                }
-            }
-
-            // Enable/disable Edit Start button based on running or paused state
-            const editBtn = document.getElementById('workEditStartBtn');
-            const editBtnLarge = document.getElementById('workEditStartBtnLarge');
-            const isEditable = workTimerRunning || workTimerPaused;
-            if (editBtn) editBtn.disabled = !isEditable;
-            if (editBtnLarge) editBtnLarge.disabled = !isEditable;
-
-            const detail = document.getElementById('workTimerDetailLarge');
-            if (detail) {
-                if (workTimerRunning && workTimerStartTime) {
-                    detail.textContent = `Running since ${new Date(workTimerStartTime).toLocaleString()}`;
-                } else if (workTimerPaused && workTimerStartTime) {
-                    detail.textContent = `Paused — started ${new Date(workTimerStartTime).toLocaleString()}`;
-                } else {
-                    detail.textContent = 'Not started';
-                }
-            }
-
-            const startBtn = document.getElementById('workStartBtn');
-            const startBtnLarge = document.getElementById('workStartBtnLarge');
-            const stopBtn = document.getElementById('workStopBtn');
-            const stopBtnLarge = document.getElementById('workStopBtnLarge');
-            const pauseBtn = document.getElementById('workPauseBtn');
-            const lunchBtn = document.getElementById('workLunchBtn');
-            const lunchBtnLarge = document.getElementById('workLunchBtnLarge');
-            const logBtn = document.getElementById('workLogBtn');
-            const logBtnLarge = document.getElementById('workLogBtnLarge');
-
-            if (startBtn) startBtn.disabled = workTimerRunning || workTimerPaused;
-            if (startBtnLarge) startBtnLarge.disabled = workTimerRunning || workTimerPaused;
-            if (stopBtn) stopBtn.disabled = !workTimerRunning && !workTimerPaused;
-            if (stopBtnLarge) stopBtnLarge.disabled = !workTimerRunning && !workTimerPaused;
-            if (pauseBtn) pauseBtn.disabled = !workTimerRunning;
-            if (lunchBtn) lunchBtn.disabled = !workTimerRunning;
-            if (lunchBtnLarge) lunchBtnLarge.disabled = !workTimerRunning;
-            const logDisabled = !workTimerRunning && !workTimerPaused && workTimerLunchMinutes === 0;
-            if (logBtn) logBtn.disabled = logDisabled;
-            if (logBtnLarge) logBtnLarge.disabled = logDisabled;
+    const startInfo = document.getElementById('workTimerStartInfo');
+    if (startInfo) {
+        if (workTimerRunning && workTimerStartTime) {
+            const startDate = new Date(workTimerStartTime);
+            startInfo.textContent = `Started at ${startDate.toLocaleString()}`;
+        } else if (workTimerPaused && workTimerStartTime) {
+            const startDate = new Date(workTimerStartTime);
+            startInfo.textContent = `Paused · started at ${startDate.toLocaleString()}`;
+        } else {
+            startInfo.textContent = 'Not started';
         }
+    }
 
+    // Enable/disable Edit Start button based on running or paused state
+    const editBtn = document.getElementById('workEditStartBtn');
+    const editBtnLarge = document.getElementById('workEditStartBtnLarge');
+    const isEditable = workTimerRunning || workTimerPaused;
+    if (editBtn) editBtn.disabled = !isEditable;
+    if (editBtnLarge) editBtnLarge.disabled = !isEditable;
+
+    const detail = document.getElementById('workTimerDetailLarge');
+    if (detail) {
+        if (workTimerRunning && workTimerStartTime) {
+            detail.textContent = `Running since ${new Date(workTimerStartTime).toLocaleString()}`;
+        } else if (workTimerPaused && workTimerStartTime) {
+            detail.textContent = `Paused — started ${new Date(workTimerStartTime).toLocaleString()}`;
+        } else {
+            detail.textContent = 'Not started';
+        }
+    }
+
+    // Get all button references
+    const startBtn = document.getElementById('workStartBtn');
+    const startBtnLarge = document.getElementById('workStartBtnLarge');
+    const stopBtn = document.getElementById('workStopBtn');
+    const stopBtnLarge = document.getElementById('workStopBtnLarge');
+    const pauseBtn = document.getElementById('workPauseBtn');
+    const pauseBtnLarge = document.getElementById('workPauseBtnLarge');
+    const lunchBtn = document.getElementById('workLunchBtn');
+    const lunchBtnLarge = document.getElementById('workLunchBtnLarge');
+    const logBtn = document.getElementById('workLogBtn');
+    const logBtnLarge = document.getElementById('workLogBtnLarge');
+
+    // Disable/enable buttons based on state
+    if (startBtn) startBtn.disabled = workTimerRunning || workTimerPaused;
+    if (startBtnLarge) startBtnLarge.disabled = workTimerRunning || workTimerPaused;
+    if (stopBtn) stopBtn.disabled = !workTimerRunning && !workTimerPaused;
+    if (stopBtnLarge) stopBtnLarge.disabled = !workTimerRunning && !workTimerPaused;
+    if (lunchBtn) lunchBtn.disabled = !workTimerRunning;
+    if (lunchBtnLarge) lunchBtnLarge.disabled = !workTimerRunning;
+    const logDisabled = !workTimerRunning && !workTimerPaused && workTimerLunchMinutes === 0;
+    if (logBtn) logBtn.disabled = logDisabled;
+    if (logBtnLarge) logBtnLarge.disabled = logDisabled;
+
+    // Handle pause/resume button text and click handler
+    if (pauseBtn) {
+        if (workTimerPaused) {
+            pauseBtn.innerHTML = '<i class="fas fa-play"></i> Resume';
+            pauseBtn.onclick = resumeWorkTimer;
+            pauseBtn.disabled = false;
+        } else if (workTimerRunning) {
+            pauseBtn.innerHTML = '<i class="fas fa-pause"></i> Pause';
+            pauseBtn.onclick = pauseWorkTimer;
+            pauseBtn.disabled = false;
+        } else {
+            pauseBtn.innerHTML = '<i class="fas fa-pause"></i> Pause';
+            pauseBtn.onclick = pauseWorkTimer;
+            pauseBtn.disabled = true;
+        }
+    }
+    if (pauseBtnLarge) {
+        if (workTimerPaused) {
+            pauseBtnLarge.innerHTML = '<i class="fas fa-play"></i> Resume';
+            pauseBtnLarge.onclick = resumeWorkTimer;
+            pauseBtnLarge.disabled = false;
+        } else if (workTimerRunning) {
+            pauseBtnLarge.innerHTML = '<i class="fas fa-pause"></i> Pause';
+            pauseBtnLarge.onclick = pauseWorkTimer;
+            pauseBtnLarge.disabled = false;
+        } else {
+            pauseBtnLarge.innerHTML = '<i class="fas fa-pause"></i> Pause';
+            pauseBtnLarge.onclick = pauseWorkTimer;
+            pauseBtnLarge.disabled = true;
+        }
+    }
+
+    // Expected finish time
+    if (workTimerStartTime) {
+        const workEndTime = workTimerStartTime + 9 * 60 * 60 * 1000;
+        const formattedEndTime = new Date(workEndTime).toLocaleTimeString('en-GB', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+        const finishDisplay = document.getElementById('exptectedFinish');
+        if (finishDisplay) finishDisplay.textContent = formattedEndTime;
+
+        const remainingMs = workEndTime - Date.now();
+        const timeUntilFinish = document.getElementById('timeUntilFinish');
+        if (timeUntilFinish) {
+            if (remainingMs > 0) {
+                const remainingSeconds = Math.floor(remainingMs / 1000);
+                const hours = Math.floor(remainingSeconds / 3600);
+                const minutes = Math.floor((remainingSeconds % 3600) / 60);
+                const secs = remainingSeconds % 60;
+                timeUntilFinish.textContent =
+                    `(${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')} left)`;
+            } else {
+                timeUntilFinish.textContent = '(Finished)';
+            }
+        }
+    } else {
+        const finishDisplay = document.getElementById('exptectedFinish');
+        if (finishDisplay) finishDisplay.textContent = '--:--:--';
+        const timeUntilFinish = document.getElementById('timeUntilFinish');
+        if (timeUntilFinish) timeUntilFinish.textContent = '';
+    }
+}
         function resumeWorkTimerFromStorage() {
             const stored = localStorage.getItem('workTimerState');
             if (!stored) return;
@@ -5132,6 +5141,7 @@
             showToast('Work timer resumed', 'success');
         };
 
+        
         window.stopWorkTimer = async function () {
             if (!workTimerRunning && !workTimerPaused) { showToast('Work timer is not running', 'info'); return; }
             await logWorkDay(false);
@@ -5193,92 +5203,100 @@
             showToast('🍽️ Lunch break added (30 min deducted)', 'success');
         };
 
-        window.logWorkDay = async function (automatic = false) {
-            if (!workTimerRunning && !workTimerPaused && workTimerLunchMinutes === 0) {
-                await Swal.fire({
-                    icon: 'warning',
-                    title: 'No Time',
-                    text: 'Start the work timer or take a lunch break first.'
-                });
-                return;
-            }
-            let seconds = 0;
-            if (workTimerRunning && workTimerStartTime) {
-                const elapsedMs = Date.now() - workTimerStartTime;
-                const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
-                seconds = Math.max(0, Math.floor((elapsedMs - lunchMs) / 1000));
-            } else if (workTimerPaused) {
-                const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
-                seconds = Math.max(0, Math.floor((workPausedElapsed - lunchMs) / 1000));
-            } else {
-                await Swal.fire({
-                    icon: 'warning',
-                    title: 'Timer Not Running',
-                    text: 'Start the work timer to log time.'
-                });
-                return;
-            }
-            seconds = Math.min(seconds, MAX_WORK_SECONDS);
-            if (seconds < 60) {
-                await Swal.fire({ icon: 'warning', title: 'Too Short', text: 'Work at least 1 minute to log.' });
-                return;
-            }
-            const hours = seconds / 3600;
-            let workTask = tasks.find(t => t.title === 'Work Day');
-            if (!workTask) {
-                const newTask = {
-                    title: 'Work Day',
-                    description: 'General work hours logged',
-                    status: 'done',
-                    assignee: profileSettings.display_name || currentUser.email,
-                    time_estimate: 8.0,
-                    user_id: currentUser.id,
-                    created_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString()
-                };
-                const { data, error } = await supabaseClient.from('tasks').insert([newTask]).select();
-                if (error) {
-                    await Swal.fire({ icon: 'error', title: 'Error', text: 'Could not create work task.' });
-                    return;
-                }
-                workTask = data[0];
-                await loadTasks();
-                renderTasks();
-                populateTimerSelect();
-                populateReportAssigneeFilter();
-            }
-            const payload = {
-                task_id: workTask.id,
-                user_id: currentUser.id,
-                hours: parseFloat(hours.toFixed(2)),
-                description: `Work day (${workTimerLunchMinutes} min lunch)`,
-                created_at: new Date().toISOString()
-            };
-            try {
-                const { error } = await supabaseClient.from('time_entries').insert([payload]);
-                if (error) throw error;
-                await recordAutomaticJournal(hours, workTask.title);
-                showToast(automatic ? '8-hour workday logged automatically' : `Logged ${hours.toFixed(1)} hours for today`, 'success');
-                workTimerRunning = false;
-                workTimerPaused = false;
-                workTimerAutoLogging = false;
-                clearInterval(workTimerInterval);
-                workTimerInterval = null;
-                workTimerLunchMinutes = 0;
-                workTimerStartTime = null;
-                localStorage.removeItem('workTimerState');
-                persistTimerState('work', { running: false });
-                updateWorkTimerDisplays();
-                await loadTimeEntries();
-                renderTimeEntries();
-                updateDashboard();
-                updateInsights();
-            } catch (_) {
-                workTimerAutoLogging = false;
-                await Swal.fire({ icon: 'error', title: 'Log Failed', text: 'Could not log work day.' });
-            }
+       window.logWorkDay = async function (automatic = false) {
+    if (!workTimerRunning && !workTimerPaused && workTimerLunchMinutes === 0) {
+        await Swal.fire({
+            icon: 'warning',
+            title: 'No Time',
+            text: 'Start the work timer or take a lunch break first.'
+        });
+        return;
+    }
+    let seconds = 0;
+    if (workTimerRunning && workTimerStartTime) {
+        const elapsedMs = Date.now() - workTimerStartTime;
+        const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
+        seconds = Math.max(0, Math.floor((elapsedMs - lunchMs) / 1000));
+    } else if (workTimerPaused) {
+        const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
+        seconds = Math.max(0, Math.floor((workPausedElapsed - lunchMs) / 1000));
+    } else {
+        await Swal.fire({
+            icon: 'warning',
+            title: 'Timer Not Running',
+            text: 'Start the work timer to log time.'
+        });
+        return;
+    }
+    seconds = Math.min(seconds, MAX_WORK_SECONDS);
+    if (seconds < 60) {
+        await Swal.fire({ icon: 'warning', title: 'Too Short', text: 'Work at least 1 minute to log.' });
+        return;
+    }
+    const hours = seconds / 3600;
+    let workTask = tasks.find(t => t.title === 'Work Day');
+    if (!workTask) {
+        const newTask = {
+            title: 'Work Day',
+            description: 'General work hours logged',
+            status: 'done',
+            assignee: profileSettings.display_name || currentUser.email,
+            time_estimate: 8.0,
+            user_id: currentUser.id,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
         };
+        const { data, error } = await supabaseClient.from('tasks').insert([newTask]).select();
+        if (error) {
+            await Swal.fire({ icon: 'error', title: 'Error', text: 'Could not create work task.' });
+            return;
+        }
+        workTask = data[0];
+        await loadTasks();
+        renderTasks();
+        populateTimerSelect();
+        populateReportAssigneeFilter();
+    }
+    const payload = {
+        task_id: workTask.id,
+        user_id: currentUser.id,
+        hours: parseFloat(hours.toFixed(2)),
+        description: `Work day (${workTimerLunchMinutes} min lunch)`,
+        created_at: new Date().toISOString()
+    };
+    try {
+        const { error } = await supabaseClient.from('time_entries').insert([payload]);
+        if (error) throw error;
 
+        // Try to record journal entry, but don't fail the whole log if it fails
+        try {
+            await recordAutomaticJournal(hours, workTask.title);
+        } catch (journalError) {
+            console.warn('Journal entry failed:', journalError);
+            showToast('Time logged, but journal entry could not be saved.', 'info');
+        }
+
+        showToast(automatic ? '8-hour workday logged automatically' : `Logged ${hours.toFixed(1)} hours for today`, 'success');
+        // Reset timer state
+        workTimerRunning = false;
+        workTimerPaused = false;
+        workTimerAutoLogging = false;
+        clearInterval(workTimerInterval);
+        workTimerInterval = null;
+        workTimerLunchMinutes = 0;
+        workTimerStartTime = null;
+        localStorage.removeItem('workTimerState');
+        persistTimerState('work', { running: false });
+        updateWorkTimerDisplays();
+        await loadTimeEntries();
+        renderTimeEntries();
+        updateDashboard();
+        updateInsights();
+    } catch (error) {
+        console.error('Log work day error:', error);
+        await Swal.fire({ icon: 'error', title: 'Log Failed', text: 'Could not log work day.' });
+    }
+};
         // ──────────────────────────────────────────────────────────────
         // 19. DASHBOARD
         // ──────────────────────────────────────────────────────────────
