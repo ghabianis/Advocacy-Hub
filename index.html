@@ -777,7 +777,7 @@
                         </div>
                     </div>
 
-                    <!-- Date selector for the tracker -->
+                                        <!-- Date selector for the tracker -->
                     <div class="flex items-center gap-3 mb-4 flex-wrap">
                         <label class="text-sm text-gray-600">Week starting:</label>
                         <input type="date" id="supportTicketWeekStart"
@@ -788,6 +788,18 @@
                             title="Copy tickets from previous week">
                             <i class="fas fa-copy mr-1"></i> Copy Previous Week
                         </button>
+                        <div class="relative flex-1 min-w-[220px]">
+                            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+                            <input type="text" id="supportTicketSearch"
+                                placeholder="Search tickets..."
+                                class="w-full pl-9 pr-9 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none transition"
+                                oninput="handleSupportTicketSearch(this.value)" />
+                            <button type="button" onclick="clearSupportTicketSearch()"
+                                class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm p-1 rounded"
+                                title="Clear search">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Table container -->
@@ -804,6 +816,7 @@
                             </tfoot>
                         </table>
                     </div>
+                    <div id="supportTicketPagination"></div>
 
                     <!-- Summary cards -->
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
