@@ -527,3 +527,6465 @@
 	window.openNoteForEdit = openNoteForEdit;
 
 })();
+
+        // ──────────────────────────────────────────────────────────────
+        // 1. SUPABASE
+        // ──────────────────────────────────────────────────────────────
+        const SUPABASE_URL = 'https://ngfcmanscnstjqajaoee.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5nZmNtYW5zY25zdGpxYWphb2VlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2MjI5NzgsImV4cCI6MjEwMjE5ODk3OH0.KDKMNchmJ5RgvvzVF5sQnZROXmn-RjElHrXMxTgHalA';
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+            autoRefreshToken: true,
+            persistSession: true
+        });
+
+        // ──────────────────────────────────────────────────────────────
+        // 2. STATE
+        // ──────────────────────────────────────────────────────────────
+        let currentUser = null;
+        let tasks = [];
+        let notes = [];
+        let meetings = [];
+        let timeEntries = [];
+        let files = [];
+        let emails = [];
+        let teams = [];
+        let workspaceData = { sprints: [], approvals: [], availability: [], templates: [], notifications: [], activity: [] };
+        let timerInterval = null;
+        let timerRunning = false;
+        let timerStartTime = null;
+        let timerPaused = false;
+        let pausedElapsed = 0;
+        let selectedTaskId = null;
+        let chartInstance = null;
+        let insightChartInstance = null;
+        let insightTimeChartInstance = null;
+        let sortableInstances = [];
+        let reminderCheckInterval = null;
+        let notifiedMeetingIds = new Set();
+        let currentFilePreview = null;
+        let currentEmailDetailId = null;
+        let calendarMonth = new Date().getMonth();
+        let calendarYear = new Date().getFullYear();
+        let plannerDate = new Date();
+        let currentFileFilter = 'all';
+        let currentFolder = null;
+        let studioEditingFile = null;
+        let personalData = null;
+
+        let profileSettings = {
+            display_name: '',
+            avatar_url: '',
+            reminders_enabled: true,
+            reminder_minutes: 15,
+            browser_notifications: false,
+            dark_mode: false,
+            memberSince: '',
+        };
+
+        let workTimerRunning = false;
+        let workTimerStartTime = null;
+        let workTimerPaused = false;
+        let workPausedElapsed = 0;
+        let workTimerLunchMinutes = 0;
+        let workTimerInterval = null;
+        let workTimerAutoLogging = false;
+        const MAX_WORK_SECONDS = 9 * 60 * 60;
+        window._inlineEditId = null; // track which note is being edited (null = new)
+        let _personalCache = null;
+        // ──────────────────────────────────────────────────────────────
+        // 3. TOAST
+        // ──────────────────────────────────────────────────────────────
+        function showToast(msg, type = 'info') {
+            const el = document.getElementById('toast');
+            if (!el) return;
+            el.textContent = msg;
+            el.className = `toast ${type} show`;
+            clearTimeout(el._hide);
+            el._hide = setTimeout(() => el.classList.remove('show'), 3000);
+        }
+
+        function playReminderSound() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const o = ctx.createOscillator();
+                const g = ctx.createGain();
+                o.type = 'sine';
+                o.frequency.value = 880;
+                g.gain.value = 0.02;
+                o.connect(g);
+                g.connect(ctx.destination);
+                o.start();
+                setTimeout(() => { o.stop(); try { ctx.close(); } catch (_) { } }, 300);
+            } catch (_) { }
+        }
+
+        function NavigateToHome() {
+            window.location.href('https://cc03-2c0f-f3a0-122-62a5-6459-a148-93ae.ngrok-free.app/')
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 4. AUTH
+        // ──────────────────────────────────────────────────────────────
+        function describeAuthError(error) {
+            const msg = (error && error.message) || '';
+            const lower = msg.toLowerCase();
+            if (lower.includes('invalid login credentials')) {
+                return {
+                    title: 'Incorrect Email or Password',
+                    text: 'That email/password combination was rejected. Double-check for typos, caps-lock, or extra spaces. If you just signed up, make sure you verified your email first.'
+                };
+            }
+            if (lower.includes('email not confirmed')) {
+                return {
+                    title: 'Email Not Verified',
+                    text: 'Your account exists but the email address hasn\'t been confirmed yet. Check your inbox (and spam folder) for the verification link, then try signing in again.'
+                };
+            }
+            if (lower.includes('user not found')) {
+                return {
+                    title: 'No Account Found',
+                    text: 'We couldn\'t find an account with that email. Use "Sign up" below to create one.'
+                };
+            }
+            if (error && error.status === 400) {
+                return {
+                    title: 'Login Failed',
+                    text: msg || 'The server rejected this request (400). This almost always means the email or password is wrong, or the account has not confirmed its email yet.'
+                };
+            }
+            return { title: 'Login Failed', text: msg || 'Invalid email or password. Please check your credentials.' };
+        }
+
+        async function login(email, password) {
+            showAppLoader();
+            try {
+                const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+                if (error) {
+                    const info = describeAuthError(error);
+                    await Swal.fire({
+                        icon: 'error', title: info.title, text: info.text,
+                        footer: 'If you don\'t have an account, please sign up first.'
+                    });
+                    return false;
+                }
+                currentUser = data.user;
+                showToast(`Welcome ${currentUser.email}!`, 'success');
+                await afterAuth();
+
+                return true;
+            } catch (err) {
+                await Swal.fire({
+                    icon: 'error', title: 'Network Error', text: err.message ||
+                        'Could not reach authentication server.'
+                });
+                return false;
+            } finally {
+                hideAppLoader();
+            }
+        }
+        console.log('here is the current user', currentUser);
+
+        async function register(email, password) {
+            showAppLoader();
+            try {
+                const { data, error } = await supabaseClient.auth.signUp({ email, password });
+                if (error) {
+                    hideAppLoader();
+                    await Swal.fire({
+                        icon: 'error', title: 'Registration Failed', text: error.message ||
+                            'Unable to create account. This email may already be in use.'
+                    });
+                    return false;
+                }
+                hideAppLoader();
+                if (data?.user && !data.session) {
+                    await Swal.fire({
+                        icon: 'success', title: 'Check Your Email', text: 'We sent a confirmation link to ' +
+                            email + '. Please verify your email before signing in.'
+                    });
+                } else {
+                    await Swal.fire({
+                        icon: 'success', title: 'Account Created!',
+                        text: 'Please sign in with your new credentials.', timer: 2000,
+                        showConfirmButton: false
+                    });
+                }
+                showToast('Account created! Please sign in.', 'success');
+                return true;
+            } catch (err) {
+                hideAppLoader();
+                await Swal.fire({
+                    icon: 'error', title: 'Network Error', text: err.message ||
+                        'Could not reach registration server.'
+                });
+                return false;
+            } finally {
+                hideAppLoader();
+            }
+        }
+
+        async function logout() {
+            stopReminderChecks();
+            await supabaseClient.auth.signOut();
+            currentUser = null;
+            showToast('Signed out', 'info');
+            document.getElementById('loginOverlay').classList.remove('hidden');
+            document.getElementById('app').style.display = 'none';
+            showLogin();
+        }
+
+        function showLogin() {
+            hideAppLoader();
+            const container = document.querySelector('.login-card');
+            container.innerHTML = `
+                        <div class="text-center mb-6"><div class="w-14 h-14 rounded-2xl bg-indigo-600 flex items-center justify-center text-white text-2xl mx-auto shadow-md shadow-indigo-200">⚡</div><h2 class="text-2xl font-bold text-gray-800 mt-3">DevAdvocate Hub</h2><p class="text-sm text-gray-400">Sign in to continue</p></div>
+                        <div class="space-y-3"><input id="loginEmail" type="email" placeholder="Email" class="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none transition" /><input id="loginPassword" type="password" placeholder="Password" class="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 outline-none transition" /><button onclick="handleLogin()" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl transition">Sign In</button><p class="text-center text-sm text-gray-400">Don't have an account? <a href="#" onclick="showRegister()" class="text-indigo-600 hover:underline">Sign up</a></p></div>
+                    `;
+        }
+
+        function showRegister() {
+            hideAppLoader();
+            const container = document.querySelector('.login-card');
+            container.innerHTML = `
+                        <div class="text-center mb-6"><div class="w-14 h-14 rounded-2xl bg-rose-600 flex items-center justify-center text-white text-2xl mx-auto shadow-md shadow-rose-200">✏️</div><h2 class="text-2xl font-bold text-gray-800 mt-3">Create Account</h2><p class="text-sm text-gray-400">Start organizing your work</p></div>
+                        <div class="space-y-3"><input id="regEmail" type="email" placeholder="Email" class="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-rose-200 focus:border-rose-400 outline-none transition" /><input id="regPassword" type="password" placeholder="Password (min 6 chars)" class="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-rose-200 focus:border-rose-400 outline-none transition" /><button onclick="handleRegister()" class="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl transition">Create Account</button><p class="text-center text-sm text-gray-400">Already have an account? <a href="#" onclick="showLogin()" class="text-rose-600 hover:underline">Sign in</a></p></div>
+                    `;
+        }
+
+        window.showRegister = showRegister;
+        window.showLogin = showLogin;
+
+        window.handleLogin = async function () {
+            const email = document.getElementById('loginEmail').value.trim();
+            const pass = document.getElementById('loginPassword').value;
+            if (!email || !pass) {
+                await Swal.fire({ icon: 'warning', title: 'Missing Fields', text: 'Please fill in both email and password.' });
+                return;
+            }
+            await login(email, pass);
+        };
+
+        window.handleRegister = async function () {
+            try {
+                const email = document.getElementById('regEmail').value.trim();
+                const pass = document.getElementById('regPassword').value;
+                if (!email || !pass) {
+                    await Swal.fire({ icon: 'warning', title: 'Missing Fields', text: 'Please fill in both email and password.' });
+                    return;
+                }
+                if (pass.length < 6) {
+                    await Swal.fire({ icon: 'warning', title: 'Weak Password', text: 'Password must be at least 6 characters long.' });
+                    return;
+                }
+                await register(email, pass);
+                showLogin();
+            } finally {
+                hideAppLoader();
+            }
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 5. AUTH STATE CHANGE
+        // ──────────────────────────────────────────────────────────────
+        supabaseClient.auth.onAuthStateChange((event, session) => {
+            if (event === 'SIGNED_IN' && session) {
+                console.log('SIGNED_IN', session.user);
+                currentUser = session.user;
+                afterAuth().finally(hideAppLoader);
+            } else if (event === 'SIGNED_OUT') {
+                currentUser = null;
+                stopReminderChecks();
+                document.getElementById('loginOverlay').classList.remove('hidden');
+                document.getElementById('app').style.display = 'none';
+                showLogin();
+            } else if (event === 'TOKEN_REFRESHED') {
+                if (session) currentUser = session.user;
+            }
+        });
+
+        // ──────────────────────────────────────────────────────────────
+        // 6. AFTER AUTH
+        // ──────────────────────────────────────────────────────────────
+        async function afterAuth() {
+            try {
+                document.getElementById('loginOverlay').classList.add('hidden');
+                document.getElementById('app').style.display = 'flex';
+                await initApp();
+            } finally {
+                hideAppLoader();
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 7. INIT APP
+        // ──────────────────────────────────────────────────────────────
+        async function initApp() {
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            if (!session) {
+                document.getElementById('loginOverlay').classList.remove('hidden');
+                document.getElementById('app').style.display = 'none';
+                showLogin();
+                return;
+            }
+            currentUser = session.user;
+            loadProfileSettingsFromUser();
+            applyProfileToUI();
+            applyDarkMode();
+            document.getElementById('currentDate').textContent = new Date().toLocaleDateString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric'
+            });
+
+            buildNavItems();
+
+            await loadAllData();
+            await Promise.all([loadFiles(), loadEmails(), loadTeams(), restoreTimers()]);
+            await loadWorkspaceData();
+
+            setupNavigation();
+            setupDragDrop();
+            await populateTimerSelect();
+            const lastPage = localStorage.getItem('adv_last_page') || 'dashboard';
+            navigateTo(lastPage);
+
+            const now = new Date();
+            const from = new Date(now);
+            from.setDate(now.getDate() - 30);
+            document.getElementById('reportFrom').value = from.toISOString().split('T')[0];
+            document.getElementById('reportTo').value = now.toISOString().split('T')[0];
+            updateReport();
+            updateInsights();
+
+            startReminderChecks();
+            if (profileSettings.browser_notifications && 'Notification' in window && Notification.permission ===
+                'default') {
+                try { await Notification.requestPermission(); } catch (_) { }
+            }
+
+            setupKeyboardShortcuts();
+
+            const savedCollapsed = localStorage.getItem('adv_sidebar_collapsed');
+            if (savedCollapsed === '1') {
+                document.getElementById('sidebar').classList.add('sidebar-collapsed');
+            }
+
+            document.getElementById('app').style.display = 'flex';
+            document.getElementById('loginOverlay').classList.add('hidden');
+
+            // Init whiteboard after app is ready
+            initWhiteboard();
+        }
+
+
+        window.openInlineEditor = function (id) {
+            const editor = document.getElementById('noteEditor');
+            if (!editor) return;
+
+            // If editing an existing note, load its content
+            if (id) {
+                const note = notes.find(n => n.id === id);
+                if (!note) {
+                    showToast('Note not found', 'error');
+                    return;
+                }
+                window._inlineEditId = id;
+                document.getElementById('noteTitle').value = note.title || '';
+                document.getElementById('notePaper').innerHTML = note.content || '';
+            } else {
+                // New note
+                window._inlineEditId = null;
+                document.getElementById('noteTitle').value = '';
+                document.getElementById('notePaper').innerHTML = '';
+            }
+
+            // Show the editor and scroll to it
+            editor.classList.remove('hidden');
+            editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+            // Update word/char count
+            updateNoteStats();
+
+            showToast(id ? 'Editing note...' : 'New note', 'info');
+        };
+
+        window.toggleInlineFocusMode = function () {
+            document.body.classList.toggle('notes-focus-mode');
+            const isFocus = document.body.classList.contains('notes-focus-mode');
+            document.getElementById('focusBtn').textContent = isFocus ? 'Exit Focus' : 'Toggle Focus';
+            showToast(isFocus ? 'Focus mode on' : 'Focus mode off', 'info');
+        };
+
+        window.saveInlineNote = async function () {
+            const title = document.getElementById('noteTitle').value.trim();
+            const content = document.getElementById('notePaper').innerHTML;
+
+            if (!title) {
+                Swal.fire({ icon: 'warning', title: 'Missing Title', text: 'Please add a title before saving.' });
+                return;
+            }
+
+            const payload = {
+                title,
+                content,
+                user_id: currentUser.id,
+                updated_at: new Date().toISOString()
+            };
+
+            try {
+                if (window._inlineEditId) {
+                    // Update existing note
+                    const { error } = await supabaseClient
+                        .from('notes')
+                        .update(payload)
+                        .eq('id', window._inlineEditId)
+                        .eq('user_id', currentUser.id);
+                    if (error) throw error;
+                    showToast('Note updated!', 'success');
+                } else {
+                    // Create new note
+                    payload.created_at = new Date().toISOString();
+                    const { error } = await supabaseClient
+                        .from('notes')
+                        .insert([payload]);
+                    if (error) throw error;
+                    showToast('Note created!', 'success');
+                }
+
+                await loadNotes();
+                renderNotes();
+                // Optionally close the editor after save
+                // closeEditor();  // uncomment if you want it to close automatically
+            } catch (err) {
+                Swal.fire({ icon: 'error', title: 'Save Failed', text: err.message || 'Could not save note.' });
+            }
+        };
+
+        window.exportInlineNotePDF = function () {
+            const title = document.getElementById('noteTitle').value.trim() || 'Note';
+            const content = document.getElementById('notePaper').innerHTML;
+
+            if (!content) {
+                showToast('Nothing to export', 'info');
+                return;
+            }
+
+            // Build a temporary container for rendering
+            const tempDiv = document.createElement('div');
+            tempDiv.style.position = 'absolute';
+            tempDiv.style.left = '-9999px';
+            tempDiv.style.top = '0';
+            tempDiv.style.width = '800px';
+            tempDiv.style.padding = '40px';
+            tempDiv.style.background = '#ffffff';
+            tempDiv.style.fontFamily = 'Inter, sans-serif';
+            tempDiv.innerHTML =
+                `<h1 style="font-size:24px;font-weight:bold;margin-bottom:20px;">${escHtml(title)}</h1><div style="font-size:16px;line-height:1.6;">${content}</div>`;
+            document.body.appendChild(tempDiv);
+
+            html2canvas(tempDiv, { scale: 2, backgroundColor: '#ffffff' })
+                .then(canvas => {
+                    const imgData = canvas.toDataURL('image/png');
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF('p', 'mm', 'a4');
+                    const pdfWidth = pdf.internal.pageSize.getWidth();
+                    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+                    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+                    pdf.save(`${title}.pdf`);
+                    document.body.removeChild(tempDiv);
+                    showToast('PDF exported!', 'success');
+                })
+                .catch(() => {
+                    document.body.removeChild(tempDiv);
+                    showToast('Could not export PDF', 'error');
+                });
+        };
+
+        window.closeEditor = function () {
+            document.getElementById('noteEditor').classList.add('hidden');
+            document.body.classList.remove('notes-focus-mode');
+            document.getElementById('focusBtn').textContent = 'Toggle Focus';
+        };
+
+        window.clearNote = function () {
+            Swal.fire({
+                title: 'Clear note content?',
+                text: 'This will remove all text from the editor.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                confirmButtonText: 'Yes, clear'
+            }).then(result => {
+                if (result.isConfirmed) {
+                    document.getElementById('noteTitle').value = '';
+                    document.getElementById('notePaper').innerHTML = '';
+                    updateNoteStats();
+                    showToast('Cleared', 'info');
+                }
+            });
+        };
+
+        // Helper: update word & character counts
+        function updateNoteStats() {
+            const content = document.getElementById('notePaper').innerText || '';
+            const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+            const chars = content.length;
+            document.getElementById('wordCount').textContent = words;
+            document.getElementById('charCount').textContent = chars;
+        }
+        // --------------------------------------------
+        // 1. Helper: get the current user ID
+        // --------------------------------------------
+        function getUserId() {
+            return currentUser?.id;
+        }
+
+        // --------------------------------------------
+        // 2. Load all personal data from Supabase
+        // --------------------------------------------
+        async function loadPersonalDataFromSupabase() {
+            const userId = getUserId();
+            if (!userId) return null;
+
+            const [
+                { data: captures, error: e1 },
+                { data: followups, error: e2 },
+                { data: journal, error: e3 },
+                { data: content, error: e4 },
+                { data: templates, error: e5 },
+                { data: knowledge, error: e6 }
+            ] = await Promise.all([
+                supabaseClient.from('personal_captures').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+                supabaseClient.from('personal_followups').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+                supabaseClient.from('personal_journal_entries').select('*').eq('user_id', userId).order('date', { ascending: false }),
+                supabaseClient.from('personal_content_plans').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+                supabaseClient.from('personal_templates').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+                supabaseClient.from('personal_knowledge').select('*').eq('user_id', userId).order('created_at', { ascending: false })
+            ]);
+
+            if (e1 || e2 || e3 || e4 || e5 || e6) {
+                console.warn('Error loading personal data from Supabase', { e1, e2, e3, e4, e5, e6 });
+                // Fallback to localStorage if available
+                return loadPersonalDataFromLocalStorage();
+            }
+
+            return {
+                captures: captures || [],
+                followUps: followups || [],
+                journal: journal || [],
+                content: content || [],
+                templates: templates || [],
+                knowledge: knowledge || []
+            };
+        }
+
+        async function refreshPersonalCache() {
+            _personalCache = await loadPersonalDataFromSupabase();
+            return _personalCache;
+        }
+
+        function getPersonalCache() {
+            return _personalCache || { captures: [], followUps: [], journal: [], content: [], templates: [], knowledge: [] };
+        }
+
+        async function addCapture(type, text) {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_captures')
+                .insert([{ user_id: userId, type, text }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.captures.unshift(data);
+            renderMyWork();
+            showToast('Capture saved', 'success');
+        }
+
+        async function addFollowUpSupabase(person, topic, due) {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_followups')
+                .insert([{ user_id: userId, person, topic, due, done: false }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.followUps.unshift(data);
+            renderMyWork();
+            showToast('Follow‑up added', 'success');
+        }
+
+        async function toggleFollowUpDone(id, done) {
+            const { error } = await supabaseClient
+                .from('personal_followups')
+                .update({ done })
+                .eq('id', id)
+                .eq('user_id', getUserId());
+            if (error) { showToast(error.message, 'error'); return; }
+            const item = _personalCache.followUps.find(f => f.id === id);
+            if (item) item.done = done;
+            renderMyWork();
+        }
+
+        async function addJournalEntry(date, text, auto = false) {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_journal_entries')
+                .insert([{ user_id: userId, date, text, auto }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.journal.unshift(data);
+            renderMyWork();
+            showToast('Journal entry saved', 'success');
+        }
+
+        async function addContentPlanSupabase(title, type, date, status = 'idea') {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_content_plans')
+                .insert([{ user_id: userId, title, type, date, status }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.content.unshift(data);
+            renderMyWork();
+            showToast('Content idea added', 'success');
+        }
+
+        async function addTemplateSupabase(name, body) {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_templates')
+                .insert([{ user_id: userId, name, body }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.templates.unshift(data);
+            renderMyWork();
+            showToast('Template added', 'success');
+        }
+
+        async function addKnowledgeSupabase(title, url) {
+            const userId = getUserId();
+            if (!userId) return;
+            const { data, error } = await supabaseClient
+                .from('personal_knowledge')
+                .insert([{ user_id: userId, title, url }])
+                .select()
+                .single();
+            if (error) { showToast(error.message, 'error'); return; }
+            _personalCache.knowledge.unshift(data);
+            renderMyWork();
+            showToast('Knowledge link saved', 'success');
+        }
+
+        async function recordAutomaticJournalSupabase(hours, activity) {
+            const today = new Date().toISOString().slice(0, 10);
+            const text = `Time logged\n${Number(hours).toFixed(1)}h logged on ${activity || 'work'}`;
+            // Check if there's already an auto entry for today
+            const existing = _personalCache.journal.find(
+                entry => entry.date === today && entry.auto === true
+            );
+            if (existing) {
+                // Append to existing entry
+                const updatedText = existing.text + `\n${text}`;
+                const { error } = await supabaseClient
+                    .from('personal_journal_entries')
+                    .update({ text: updatedText })
+                    .eq('id', existing.id)
+                    .eq('user_id', getUserId());
+                if (!error) {
+                    existing.text = updatedText;
+                }
+            } else {
+                await addJournalEntry(today, text, true);
+            }
+        }
+
+        window.saveQuickCapture = async function () {
+            const input = document.getElementById('captureText');
+            if (!input?.value.trim()) return;
+            const type = document.getElementById('captureType').value;
+            await addCapture(type, input.value.trim());
+            input.value = '';
+        };
+
+        window.addFollowUp = async function () {
+            const person = prompt('Person or company');
+            if (!person?.trim()) return;
+            const topic = prompt('Follow-up topic');
+            if (!topic?.trim()) return;
+            const due = prompt('Due date (optional)', '');
+            await addFollowUpSupabase(person.trim(), topic.trim(), due);
+        };
+
+        window.completeFollowUp = async function (id) {
+            const item = _personalCache.followUps.find(f => f.id === id);
+            if (!item) return;
+            await toggleFollowUpDone(id, !item.done);
+        };
+
+        window.saveJournalEntry = async function () {
+            const input = document.getElementById('journalEntry');
+            if (!input?.value.trim()) return;
+            const today = new Date().toISOString().slice(0, 10);
+            await addJournalEntry(today, input.value.trim());
+            input.value = '';
+        };
+
+        window.addContentPlan = async function () {
+            const title = prompt('Title or idea');
+            if (!title?.trim()) return;
+            const type = prompt('Type: article, tutorial, talk, video, or social', 'article') || 'article';
+            const date = prompt('Target date (optional)', '');
+            await addContentPlanSupabase(title.trim(), type.trim(), date);
+        };
+
+        window.addPersonalTemplate = async function () {
+            const name = prompt('Template name');
+            if (!name?.trim()) return;
+            const body = prompt('Template prompts or structure', 'Context:\nNext action:') || '';
+            await addTemplateSupabase(name.trim(), body);
+        };
+
+        window.addKnowledgeItem = async function () {
+            const title = prompt('Reference title');
+            if (!title?.trim()) return;
+            const url = prompt('URL');
+            if (!url?.trim()) return;
+            await addKnowledgeSupabase(title.trim(), url.trim());
+        };
+
+        async function initMyWork() {
+            await refreshPersonalCache();
+            renderMyWork();
+        }
+
+        // Auto‑update stats on input
+        document.addEventListener('DOMContentLoaded', function () {
+            const paper = document.getElementById('notePaper');
+            if (paper) {
+                paper.addEventListener('input', updateNoteStats);
+            }
+        });
+
+
+
+        // ──────────────────────────────────────────────────────────────
+        // 7b. NAV ITEMS (shared between sidebar & mobile)
+        // ──────────────────────────────────────────────────────────────
+        const NAV_ITEMS = [
+            { page: 'dashboard', icon: 'fa-th-large', label: 'Dashboard', color: 'indigo' },
+            { page: 'mywork', icon: 'fa-compass', label: 'My Work', color: 'emerald' },
+            { page: 'tasks', icon: 'fa-tasks', label: 'Tasks', color: 'amber' },
+            { page: 'time', icon: 'fa-clock', label: 'Time Tracking', color: 'emerald' },
+            { page: 'notes', icon: 'fa-sticky-note', label: 'Notes', color: 'rose' },
+            { page: 'meetings', icon: 'fa-video', label: 'Meetings', color: 'blue' },
+            { page: 'calendar', icon: 'fa-calendar-alt', label: 'Calendar', color: 'teal' },
+            { page: 'planner', icon: 'fa-list-check', label: 'Daily Planner', color: 'orange' },
+            { page: 'files', icon: 'fa-folder', label: 'Files', color: 'cyan' },
+            { page: 'emails', icon: 'fa-envelope', label: 'Emails', color: 'rose' },
+            { page: 'teams', icon: 'fa-sitemap', label: 'Teams', color: 'indigo' },
+            { page: 'workspace', icon: 'fa-people-group', label: 'Team Workspace', color: 'violet' },
+            { page: 'whiteboard', icon: 'fa-paint-brush', label: 'Whiteboard', color: 'purple' },
+            { page: 'insights', icon: 'fa-chart-line', label: 'Insights', color: 'violet' },
+            { page: 'tools', icon: 'fa-plug', label: 'Integrations', color: 'purple' },
+            { page: 'reports', icon: 'fa-chart-bar', label: 'Reports', color: 'cyan' },
+            { page: 'settings', icon: 'fa-gear', label: 'Settings', color: 'gray' },
+        ];
+
+        function buildNavItems() {
+            const sidebarNav = document.getElementById('sidebarNav');
+            if (sidebarNav) {
+                sidebarNav.innerHTML = NAV_ITEMS.map(item => `
+                            <a href="#" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 transition" data-page="${item.page}" data-tooltip="${item.label}">
+                                <i class="fas ${item.icon} w-5 text-center text-${item.color}-500"></i>
+                                <span class="nav-label">${item.label}</span>
+                            </a>
+                        `).join('');
+            }
+
+            const mobileNav = document.getElementById('mobileNavContainer');
+            if (mobileNav) {
+                const user = currentUser;
+                const name = profileSettings.display_name || user?.email?.split('@')[0] || 'Developer';
+                const initial = (name[0] || 'D').toUpperCase();
+                const avatarUrl = profileSettings.avatar_url || '';
+                const avatarHtml = avatarUrl ? `<img src="${avatarUrl}" alt="avatar" />` : initial;
+
+                let html = `
+                            <div class="mobile-user">
+                                <div class="avatar">${avatarHtml}</div>
+                                <div>
+                                    <div class="user-name">${name}</div>
+                                    <div class="user-email">${user?.email || ''}</div>
+                                </div>
+                            </div>
+                            <div class="mobile-divider"></div>
+                        `;
+
+                html += NAV_ITEMS.map(item => `
+                            <a href="#" class="nav-item-mobile" data-page="${item.page}">
+                                <i class="fas ${item.icon} text-${item.color}-500"></i>
+                                ${item.label}
+                            </a>
+                        `).join('');
+
+                html += `
+                            <div class="mobile-divider"></div>
+                            <a href="#" class="nav-item-mobile logout-mobile" onclick="logout(); closeMobileMenu();">
+                                <i class="fas fa-sign-out-alt"></i> Logout
+                            </a>
+                        `;
+
+                mobileNav.innerHTML = html;
+
+                mobileNav.querySelectorAll('.nav-item-mobile[data-page]').forEach(el => {
+                    el.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        const page = el.dataset.page;
+                        navigateTo(page);
+                        closeMobileMenu();
+                    });
+                });
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 7c. MOBILE MENU TOGGLE (dropdown from top)
+        // ──────────────────────────────────────────────────────────────
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobileMenu');
+            const overlay = document.getElementById('mobileMenuOverlay');
+            const isOpen = menu.classList.contains('open');
+            if (isOpen) {
+                closeMobileMenu();
+            } else {
+                menu.classList.add('open');
+                overlay.classList.add('active');
+                document.body.style.overflow = 'hidden';
+            }
+        }
+        window.toggleMobileMenu = toggleMobileMenu;
+
+        function closeMobileMenu() {
+            const menu = document.getElementById('mobileMenu');
+            const overlay = document.getElementById('mobileMenuOverlay');
+            menu.classList.remove('open');
+            overlay.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+        window.closeMobileMenu = closeMobileMenu;
+
+        // ──────────────────────────────────────────────────────────────
+        // 7d. DESKTOP SIDEBAR TOGGLE
+        // ──────────────────────────────────────────────────────────────
+        function toggleSidebarDesktop() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('sidebar-collapsed');
+            try {
+                localStorage.setItem('adv_sidebar_collapsed', sidebar.classList.contains('sidebar-collapsed') ? '1' :
+                    '0');
+            } catch (_) { }
+        }
+        window.toggleSidebarDesktop = toggleSidebarDesktop;
+
+        // ──────────────────────────────────────────────────────────────
+        // 7e. KEYBOARD SHORTCUTS
+        // ──────────────────────────────────────────────────────────────
+        function setupKeyboardShortcuts() {
+            document.addEventListener('keydown', (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                    e.preventDefault();
+                    navigateTo('tasks');
+                }
+                if ((e.ctrlKey || e.metaKey) && e.key === 'n' && !e.shiftKey) {
+                    e.preventDefault();
+                    navigateTo('tasks');
+                    setTimeout(() => openTaskModal(), 100);
+                }
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'N') {
+                    e.preventDefault();
+                    navigateTo('notes');
+                    setTimeout(() => window.openInlineEditor(), 100);
+                }
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'F') {
+                    e.preventDefault();
+                    openSearch();
+                }
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'E') {
+                    e.preventDefault();
+                    navigateTo('emails');
+                }
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'C') {
+                    e.preventDefault();
+                    navigateTo('calendar');
+                }
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'P') {
+                    e.preventDefault();
+                    navigateTo('planner');
+                }
+                if (e.key === '?' && !e.ctrlKey && !e.metaKey) {
+                    e.preventDefault();
+                    toggleShortcutsHelp();
+                }
+                if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+                    e.preventDefault();
+                    toggleDarkMode();
+                }
+                if (e.key === 'Escape') {
+                    document.querySelectorAll('.modal-overlay:not(.hidden)').forEach(el => el.classList.add('hidden'));
+                    closeMobileMenu();
+                }
+                // Whiteboard shortcuts: Ctrl+Z undo, Ctrl+Y redo
+                if (e.target && e.target.id === 'whiteboardCanvas') {
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                        e.preventDefault();
+                        undoWhiteboard();
+                    }
+                    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+                        e.preventDefault();
+                        redoWhiteboard();
+                    }
+                }
+            });
+        }
+
+        window.toggleShortcutsHelp = function () {
+            document.getElementById('shortcutsModal').classList.toggle('hidden');
+        };
+
+        window.openSearch = function () {
+            document.getElementById('searchModal').classList.remove('hidden');
+            setTimeout(() => document.getElementById('globalSearchInput').focus(), 100);
+        };
+
+        window.performGlobalSearch = function () {
+            const query = document.getElementById('globalSearchInput').value.toLowerCase().trim();
+            const results = document.getElementById('globalSearchResults');
+            if (!query) {
+                results.innerHTML =
+                    `<div class="text-center text-gray-400 text-sm py-8">Type to start searching...</div>`;
+                return;
+            }
+            let html = '';
+            let count = 0;
+            tasks.forEach(t => {
+                if (t.title.toLowerCase().includes(query) || (t.description || '').toLowerCase().includes(query) || (t
+                    .assignee || '').toLowerCase().includes(query)) {
+                    html +=
+                        `<div class="flex items-center gap-2 p-2 bg-indigo-50 rounded-lg text-sm hover:bg-indigo-100 transition cursor-pointer" onclick="navigateTo('tasks'); document.getElementById('searchModal').classList.add('hidden');">
+                                <i class="fas fa-tasks text-indigo-500 w-6"></i>
+                                <span class="font-medium">${escHtml(t.title)}</span>
+                                <span class="text-xs text-gray-400">task</span>
+                            </div>`;
+                    count++;
+                }
+            });
+            notes.forEach(n => {
+                if (n.title.toLowerCase().includes(query) || (n.content || '').toLowerCase().includes(query)) {
+                    html +=
+                        `<div class="flex items-center gap-2 p-2 bg-rose-50 rounded-lg text-sm hover:bg-rose-100 transition cursor-pointer" onclick="navigateTo('notes'); document.getElementById('searchModal').classList.add('hidden');">
+                                <i class="fas fa-sticky-note text-rose-500 w-6"></i>
+                                <span class="font-medium">${escHtml(n.title)}</span>
+                                <span class="text-xs text-gray-400">note</span>
+                            </div>`;
+                    count++;
+                }
+            });
+            files.forEach(f => {
+                if (f.name.toLowerCase().includes(query)) {
+                    html +=
+                        `<div class="flex items-center gap-2 p-2 bg-cyan-50 rounded-lg text-sm hover:bg-cyan-100 transition cursor-pointer" onclick="navigateTo('files'); document.getElementById('searchModal').classList.add('hidden');">
+                                <i class="fas fa-file text-cyan-500 w-6"></i>
+                                <span class="font-medium">${escHtml(f.name)}</span>
+                                <span class="text-xs text-gray-400">file</span>
+                            </div>`;
+                    count++;
+                }
+            });
+            emails.forEach(e => {
+                if (e.subject.toLowerCase().includes(query) || e.body.toLowerCase().includes(query) || e.from_email
+                    .toLowerCase().includes(query) || e.to_email.toLowerCase().includes(query)) {
+                    html +=
+                        `<div class="flex items-center gap-2 p-2 bg-rose-50 rounded-lg text-sm hover:bg-rose-100 transition cursor-pointer" onclick="navigateTo('emails'); document.getElementById('searchModal').classList.add('hidden');">
+                                <i class="fas fa-envelope text-rose-500 w-6"></i>
+                                <span class="font-medium">${escHtml(e.subject)}</span>
+                                <span class="text-xs text-gray-400">email</span>
+                            </div>`;
+                    count++;
+                }
+            });
+            if (count === 0) {
+                results.innerHTML =
+                    `<div class="text-center text-gray-400 text-sm py-8">No results found for "<strong>${escHtml(query)}</strong>"</div>`;
+            } else {
+                results.innerHTML =
+                    `<div class="text-xs text-gray-400 mb-2">${count} result${count > 1 ? 's' : ''}</div>` + html;
+            }
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 7f. DARK MODE
+        // ──────────────────────────────────────────────────────────────
+        window.toggleDarkMode = function () {
+            profileSettings.dark_mode = !profileSettings.dark_mode;
+            document.getElementById('settingsDarkMode').checked = profileSettings.dark_mode;
+            applyDarkMode();
+            if (currentUser) {
+                supabaseClient.auth.updateUser({ data: { dark_mode: profileSettings.dark_mode } }).catch(() => { });
+            }
+            localStorage.setItem('devhub_dark_mode', JSON.stringify(profileSettings.dark_mode));
+        };
+
+        function applyDarkMode() {
+            const isDark = profileSettings.dark_mode;
+            document.body.classList.toggle('dark-mode', isDark);
+            const icon = document.getElementById('darkModeIcon');
+            if (icon) { icon.className = isDark ? 'fas fa-sun' : 'fas fa-moon'; }
+            const cb = document.getElementById('settingsDarkMode');
+            if (cb) cb.checked = isDark;
+        }
+
+        function loadDarkModePreference() {
+            try {
+                const stored = localStorage.getItem('devhub_dark_mode');
+                if (stored !== null) { profileSettings.dark_mode = JSON.parse(stored); } else {
+                    profileSettings
+                        .dark_mode = false;
+                }
+            } catch (_) { profileSettings.dark_mode = false; }
+            if (currentUser?.user_metadata?.dark_mode !== undefined) {
+                profileSettings.dark_mode = currentUser.user_metadata.dark_mode;
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 7g. PROFILE
+        // ──────────────────────────────────────────────────────────────
+        function loadProfileSettingsFromUser() {
+            const meta = currentUser?.user_metadata || {};
+            console.log('loadProfileSettingsFromUser', currentUser);
+
+            const longDate = currentUser?.created_at
+                ? new Intl.DateTimeFormat('en-US', {
+                    dateStyle: 'full'
+                }).format(new Date(currentUser.created_at))
+                : '';
+
+            console.log('longDate', longDate);
+            profileSettings = {
+                display_name: meta.display_name || '',
+                avatar_url: meta.avatar_url || '',
+                reminders_enabled: meta.reminders_enabled !== undefined
+                    ? meta.reminders_enabled
+                    : true,
+                reminder_minutes: meta.reminder_minutes || 15,
+                browser_notifications: meta.browser_notifications || false,
+                dark_mode: meta.dark_mode || false,
+                memberSince: longDate
+            };
+
+            loadDarkModePreference();
+        }
+
+        function applyProfileToUI() {
+            const name = profileSettings.display_name || currentUser.email?.split('@')[0] || 'Developer';
+            const initial = (name[0] || 'D').toUpperCase();
+            const date = new Date(profileSettings.memberSince || '');
+
+            document.getElementById('userName').textContent = name;
+            document.getElementById('userEmail').textContent = currentUser.email || '';
+            document.getElementById('userAvatar').textContent = initial;
+            document.getElementById('settingsAvatarInitial').textContent = initial;
+            document.getElementById('settingsEmailLabel').textContent = currentUser.email || '';
+            document.getElementById('settingsDisplayName').value = profileSettings.display_name || '';
+            document.getElementById('memberSince').value = profileSettings.memberSince || '';
+            document.getElementById('settingsAvatarUrl').value = profileSettings.avatar_url || '';
+            document.getElementById('settingsRemindersEnabled').checked = !!profileSettings.reminders_enabled;
+            document.getElementById('settingsReminderMinutes').value = String(profileSettings.reminder_minutes || 15);
+            document.getElementById('settingsBrowserNotif').checked = !!profileSettings.browser_notifications;
+            document.getElementById('settingsDarkMode').checked = !!profileSettings.dark_mode;
+            document.getElementById('welcomeName').textContent = name;
+
+            const avatarImg = document.getElementById('userAvatarImg');
+            const avatarInitial = document.getElementById('userAvatar');
+            const settingsImg = document.getElementById('settingsAvatarPreview');
+            const settingsInitial = document.getElementById('settingsAvatarInitial');
+            if (profileSettings.avatar_url) {
+                avatarImg.src = profileSettings.avatar_url;
+                avatarImg.classList.remove('hidden');
+                avatarInitial.classList.add('hidden');
+                settingsImg.src = profileSettings.avatar_url;
+                settingsImg.classList.remove('hidden');
+                settingsInitial.classList.add('hidden');
+                avatarImg.onerror = () => {
+                    avatarImg.classList.add('hidden');
+                    avatarInitial.classList.remove('hidden');
+                };
+                settingsImg.onerror = () => {
+                    settingsImg.classList.add('hidden');
+                    settingsInitial.classList.remove('hidden');
+                };
+            } else {
+                avatarImg.classList.add('hidden');
+                avatarInitial.classList.remove('hidden');
+                settingsImg.classList.add('hidden');
+                settingsInitial.classList.remove('hidden');
+            }
+            applyDarkMode();
+            buildNavItems();
+        }
+
+        window.saveProfileSettings = async function () {
+            const displayName = document.getElementById('settingsDisplayName').value.trim();
+            const avatarUrl = document.getElementById('settingsAvatarUrl').value.trim();
+            try {
+                const { data, error } = await supabaseClient.auth.updateUser({
+                    data: {
+                        display_name: displayName,
+                        avatar_url: avatarUrl,
+                        dark_mode: profileSettings
+                            .dark_mode
+                    }
+                });
+                if (error) throw error;
+                currentUser = data.user;
+                loadProfileSettingsFromUser();
+                applyProfileToUI();
+                showToast('Profile updated!', 'success');
+            } catch (err) {
+                await Swal.fire({ icon: 'error', title: 'Save Failed', text: err.message || 'Could not update profile.' });
+            }
+        };
+
+        window.saveReminderSettings = async function () {
+            const remindersEnabled = document.getElementById('settingsRemindersEnabled').checked;
+            const reminderMinutes = parseInt(document.getElementById('settingsReminderMinutes').value, 10) || 15;
+            const browserNotif = document.getElementById('settingsBrowserNotif').checked;
+            if (browserNotif && 'Notification' in window && Notification.permission === 'default') {
+                try { await Notification.requestPermission(); } catch (_) { }
+            }
+            try {
+                const { data, error } = await supabaseClient.auth.updateUser({
+                    data: {
+                        reminders_enabled: remindersEnabled,
+                        reminder_minutes: reminderMinutes,
+                        browser_notifications: browserNotif
+                    }
+                });
+                if (error) throw error;
+                currentUser = data.user;
+                loadProfileSettingsFromUser();
+                notifiedMeetingIds.clear();
+                showToast('Reminder settings saved!', 'success');
+            } catch (err) {
+                await Swal.fire({
+                    icon: 'error', title: 'Save Failed', text: err.message ||
+                        'Could not update reminder settings.'
+                });
+            }
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 8. MEETING REMINDERS
+        // ──────────────────────────────────────────────────────────────
+        function startReminderChecks() {
+            stopReminderChecks();
+            checkUpcomingMeetings();
+            reminderCheckInterval = setInterval(checkUpcomingMeetings, 30000);
+        }
+
+        function stopReminderChecks() {
+            if (reminderCheckInterval) {
+                clearInterval(reminderCheckInterval);
+                reminderCheckInterval = null;
+            }
+        }
+
+        function checkUpcomingMeetings() {
+            if (!profileSettings.reminders_enabled) {
+                document.getElementById('reminderBadge').classList.add('hidden');
+                return;
+            }
+            const now = Date.now();
+            const windowMs = (profileSettings.reminder_minutes || 15) * 60 * 1000;
+            const upcoming = meetings.filter(m => {
+                if (!m.meeting_date) return false;
+                const t = new Date(m.meeting_date).getTime();
+                return t > now && t <= now + windowMs;
+            });
+            updateReminderBadge();
+            upcoming.forEach(m => {
+                if (notifiedMeetingIds.has(m.id)) return;
+                notifiedMeetingIds.add(m.id);
+                const minsAway = Math.max(1, Math.round((new Date(m.meeting_date).getTime() - now) / 60000));
+                showToast(`📅 "${m.title}" starts in ${minsAway} min`, 'info');
+                try { playReminderSound(); } catch (_) { }
+                Swal.fire({
+                    icon: 'info',
+                    title: 'Upcoming Meeting',
+                    html: `<b>${escHtml(m.title)}</b> starts in ${minsAway} minute${minsAway === 1 ? '' : 's'}.<br><a href="${escHtml(m.link)}" target="_blank" style="color:#2563eb;">${escHtml(m.link)}</a>`,
+                    confirmButtonText: 'Got it',
+                    toast: false
+                });
+                if (profileSettings.browser_notifications && 'Notification' in window && Notification.permission ===
+                    'granted') {
+                    try {
+                        const notif = new Notification(`Upcoming meeting: ${m.title}`, {
+                            body: `Starts in ${minsAway} minute${minsAway === 1 ? '' : 's'}`,
+                            data: { link: m.link }
+                        });
+                        notif.onclick = (ev) => {
+                            ev.preventDefault();
+                            if (m.link) window.open(m.link, '_blank');
+                            window.focus();
+                        };
+                    } catch (_) { }
+                }
+                try { sendReminderEmail(m, minsAway); } catch (_) { }
+            });
+        }
+
+        async function sendReminderEmail(meeting, minsAway) {
+            if (!currentUser || !meeting) return;
+            const subject =
+                `Reminder: ${meeting.title} starts in ${minsAway} minute${minsAway === 1 ? '' : 's'}`;
+            const body =
+                `Your meeting "${meeting.title}" is starting in ${minsAway} minute${minsAway === 1 ? '' : 's'}.\n\nLink: ${meeting.link || 'n/a'}\n\nDescription:\n${meeting.description || ''}`;
+            const now = new Date().toISOString();
+            if (typeof supabaseClient !== 'undefined') {
+                try {
+                    const to_email = currentUser.email || currentUser?.user_metadata?.email || '';
+                    if (!to_email) throw new Error('No recipient email');
+                    const { data, error } = await supabaseClient.from('emails').insert([{
+                        to_email,
+                        from_email: currentUser
+                            .email,
+                        subject,
+                        body,
+                        sent_at: now,
+                        user_id: currentUser.id
+                    }]);
+                    if (!error) { console.log('Reminder email queued via Supabase', data); return; } else {
+                        console
+                            .warn('Supabase email insert error', error);
+                    }
+                } catch (_) { }
+            }
+            try {
+                const emailObj = {
+                    id: 'email_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                    from_email: currentUser.email || 'me@example.com',
+                    to_email: currentUser.email ||
+                        'me@example.com',
+                    subject,
+                    body,
+                    sent_at: now,
+                    is_read: false,
+                    created_at: now,
+                    user_id: currentUser.id || 'local'
+                };
+                emails.unshift(emailObj);
+                saveEmailsToStorage();
+            } catch (_) { }
+        }
+
+        function openReminders(e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            const pop = document.getElementById('reminderPopover');
+            const list = document.getElementById('reminderPopoverList');
+            if (!pop || !list) return;
+            const now = Date.now();
+            const upcoming = meetings.filter(m => m.meeting_date && new Date(m.meeting_date).getTime() > now)
+                .sort((a, b) => new Date(a.meeting_date).getTime() - new Date(b.meeting_date).getTime()).slice(0, 20);
+            list.innerHTML = '';
+            if (upcoming.length === 0) {
+                list.innerHTML = '<div class="text-gray-400 text-center py-6">No upcoming reminders</div>';
+            } else {
+                upcoming.forEach(m => {
+                    const minsAway = Math.max(1, Math.round((new Date(m.meeting_date).getTime() - now) /
+                        60000));
+                    const item = document.createElement('div');
+                    item.className = 'p-2 rounded hover:bg-gray-50 flex items-start justify-between gap-2';
+                    item.innerHTML = `
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-medium text-gray-800">${escHtml(m.title)}</div>
+                                    <div class="text-xs text-gray-400">${new Date(m.meeting_date).toLocaleString()} • in ${minsAway} min</div>
+                                </div>
+                                <div class="flex-shrink-0 flex gap-1">
+                                    <button class="text-xs text-indigo-600 px-2 py-1 rounded" title="Open" onclick="(function(e){e.stopPropagation(); openMeetingModal(${JSON.stringify({}).replace(/\"/g, '\"')});}) (event)">Open</button>
+                                    <button class="text-xs text-gray-500 px-2 py-1 rounded" title="Snooze 5m" onclick="(function(e){e.stopPropagation(); snoozeReminder('${m.id}',5);}) (event)">Snooze</button>
+                                    <button class="text-xs text-red-500 px-2 py-1 rounded" title="Dismiss" onclick="(function(e){e.stopPropagation(); dismissReminder('${m.id}');}) (event)">Dismiss</button>
+                                </div>`;
+                    const openBtn = item.querySelector('button[title="Open"]');
+                    if (openBtn) {
+                        openBtn.onclick = function (ev) {
+                            ev.stopPropagation();
+                            openMeetingModal(m);
+                            closeReminders();
+                        };
+                    }
+                    list.appendChild(item);
+                });
+            }
+            pop.classList.remove('hidden');
+        }
+
+        function closeReminders() {
+            const pop = document.getElementById('reminderPopover');
+            if (pop) pop.classList.add('hidden');
+        }
+
+        function dismissReminder(id) {
+            if (!id) return;
+            notifiedMeetingIds.add(id);
+            closeReminders();
+            updateReminderBadge();
+        }
+
+        function snoozeReminder(id, minutes) {
+            if (!id) return;
+            notifiedMeetingIds.add(id);
+            closeReminders();
+            updateReminderBadge();
+            setTimeout(() => {
+                try {
+                    notifiedMeetingIds.delete(id);
+                    checkUpcomingMeetings();
+                } catch (_) { }
+            }, (minutes || 5) * 60000);
+        }
+
+        function updateReminderBadge() {
+            const badge = document.getElementById('reminderBadge');
+            if (!badge) return;
+            const now = Date.now();
+            const windowMs = (profileSettings.reminder_minutes || 15) * 60 * 1000;
+            const upcoming = meetings.filter(m => m.meeting_date && new Date(m.meeting_date).getTime() > now && new Date(m
+                .meeting_date).getTime() <= now + windowMs && !notifiedMeetingIds.has(m.id));
+            if (upcoming.length > 0) {
+                badge.textContent = upcoming.length;
+                badge.classList.remove('hidden');
+            } else { badge.classList.add('hidden'); }
+        }
+
+        document.addEventListener('click', function (e) {
+            const pop = document.getElementById('reminderPopover');
+            if (!pop || pop.classList.contains('hidden')) return;
+            const bell = document.querySelector('.fa-bell')?.parentElement;
+            if (pop.contains(e.target)) return;
+            if (bell && bell.contains(e.target)) return;
+            closeReminders();
+        });
+
+        // ──────────────────────────────────────────────────────────────
+        // 9. LOAD DATA
+        // ──────────────────────────────────────────────────────────────
+        async function loadAllData() {
+            if (!currentUser) return;
+            await Promise.all([
+                loadTasks(),
+                loadNotes(),
+                loadMeetings(),
+                loadTimeEntries()
+            ]);
+            updateDashboard();
+            renderTasks();
+            renderNotes();
+            renderMeetings();
+            renderCalendar();
+            renderPlanner();
+            renderTimeEntries();
+            populateTimerSelect();
+            populateReportAssigneeFilter();
+            checkUpcomingMeetings();
+            updateInsights();
+        }
+
+        async function loadTasks() {
+            try {
+                const { data, error } = await supabaseClient.from('tasks').select('*').eq('user_id', currentUser.id)
+                    .order('created_at', { ascending: false });
+                if (error) { if (error.code === '42P01') { tasks = []; return; } throw error; }
+                tasks = data || [];
+            } catch (_) { tasks = []; }
+        }
+
+        async function loadNotes() {
+            try {
+                const { data, error } = await supabaseClient.from('notes').select('*').eq('user_id', currentUser.id)
+                    .order('created_at', { ascending: false });
+                if (error) { if (error.code === '42P01') { notes = []; return; } throw error; }
+                notes = data || [];
+            } catch (_) { notes = []; }
+        }
+
+        async function loadMeetings() {
+            try {
+                const { data, error } = await supabaseClient.from('meetings').select('*').eq('user_id', currentUser.id)
+                    .order('meeting_date', { ascending: true });
+                if (error) { if (error.code === '42P01') { meetings = []; return; } throw error; }
+                const now = Date.now();
+                meetings = (data || []).map(meeting => {
+                    if (meeting.recurrence !== 'weekly' || !meeting.meeting_date) return meeting;
+                    const nextDate = new Date(meeting.meeting_date);
+                    while (nextDate.getTime() <= now) nextDate.setDate(nextDate.getDate() + 7);
+                    return { ...meeting, meeting_date: nextDate.toISOString() };
+                });
+            } catch (_) { meetings = []; }
+        }
+
+        async function loadTimeEntries() {
+            try {
+                const { data, error } = await supabaseClient.from('time_entries').select('*, tasks(title)').eq('user_id',
+                    currentUser.id)
+                    .order('created_at', { ascending: false });
+                if (error) { if (error.code === '42P01') { timeEntries = []; return; } throw error; }
+                timeEntries = data || [];
+            } catch (_) { timeEntries = []; }
+        }
+
+        async function loadTeams() {
+            if (!currentUser) return;
+            try {
+                const { data, error } = await supabaseClient.from('teams').select('*, departments(*), team_members(*)')
+                    .eq('owner_id', currentUser.id).order('name');
+                if (error) throw error;
+                teams = data || [];
+                renderTeams();
+                populateTeamFilter();
+                populateWorkspaceTeams();
+            } catch (error) {
+                console.warn('Could not load teams from Supabase', error);
+                teams = [];
+                renderTeams();
+            }
+        }
+
+        function populateTeamSelect(id, selectedId) {
+            const select = document.getElementById(id);
+            if (!select) return;
+            select.innerHTML = '<option value="">Select a team...</option>' + teams.map(team =>
+                `<option value="${team.id}">${escHtml(team.name)}${team.departments?.length ? ` — ${escHtml(team.departments.map(d => d.name).join(', '))}` : ''}</option>`
+            ).join('');
+            select.value = selectedId || '';
+        }
+
+        function populateTeamFilter() {
+            const select = document.getElementById('taskTeamFilter');
+            if (select) {
+                const value = select.value;
+                select.innerHTML = '<option value="">All teams</option>' + teams.map(team =>
+                    `<option value="${team.id}">${escHtml(team.name)}</option>`).join('');
+                select.value = value;
+            }
+            const memberSelect = document.getElementById('taskAssigneeFilter');
+            if (memberSelect) {
+                const value = memberSelect.value;
+                const names = [...new Set(teams.flatMap(team => (team.team_members || []).map(member => member.name)))];
+                memberSelect.innerHTML = '<option value="">All members</option>' + names.map(name =>
+                    `<option value="${escHtml(name)}">${escHtml(name)}</option>`).join('');
+                memberSelect.value = value;
+            }
+        }
+
+        function populateTaskAssignees(selectedName = '') {
+            const teamId = document.getElementById('taskTeamId')?.value;
+            const select = document.getElementById('taskAssignee');
+            if (!select) return;
+            const team = teams.find(item => item.id === teamId);
+            const members = team?.team_members || [];
+            select.disabled = !teamId || members.length === 0;
+            select.innerHTML = !teamId ? '<option value="">Select a team first</option>' :
+                !members.length ? '<option value="">This team has no members</option>' :
+                    '<option value="">Select an assignee...</option>' + members.map(member =>
+                        `<option value="${escHtml(member.name)}">${escHtml(member.name)}${member.role ? ` — ${escHtml(member.role)}` : ''}</option>`
+                    ).join('');
+            select.value = selectedName || '';
+        }
+
+        function populateSprintSelect(selectedId = '') {
+            const select = document.getElementById('taskSprintId');
+            const teamId = document.getElementById('taskTeamId')?.value;
+            if (!select) return;
+            select.innerHTML = '<option value="">No sprint</option>' + workspaceData.sprints.filter(sprint => sprint
+                .team_id === teamId && sprint.status !== 'completed').map(sprint =>
+                    `<option value="${sprint.id}">${escHtml(sprint.name)} (${escHtml(sprint.status)})</option>`).join(
+                        '');
+            select.value = selectedId || '';
+        }
+
+        function renderTeams() {
+            const container = document.getElementById('teamsTree');
+            if (!container) return;
+            if (!teams.length) {
+                container.innerHTML =
+                    '<div class="text-center py-10 text-gray-400">No teams yet. Add your first team to build the organisation tree.</div>';
+                return;
+            }
+            container.innerHTML = teams.map(team =>
+                `<div class="rounded-lg border border-gray-200 p-4"><div class="flex items-start justify-between gap-3"><div><div class="font-semibold text-gray-800"><i class="fas fa-users text-indigo-500 mr-2"></i>${escHtml(team.name)}</div><div class="text-xs text-gray-400 mt-1">APO: ${escHtml(team.apo_name || 'Not assigned')} · Scrum Master: ${escHtml(team.scrum_master_name || 'Not assigned')}</div></div><div class="flex gap-2"><button onclick="openMemberEditor('${team.id}')" class="text-xs text-indigo-600 hover:underline">Add member</button><button onclick="openDepartmentEditor('${team.id}')" class="text-xs text-indigo-600 hover:underline">Add department</button><button onclick="openTeamEditor('${team.id}')" class="text-xs text-gray-500 hover:underline">Edit</button><button onclick="deleteTeam('${team.id}')" class="text-xs text-red-500 hover:underline">Delete</button></div></div><div class="ml-5 mt-3 pl-4 border-l-2 border-indigo-100 space-y-2">${(team.departments || []).length ? team.departments.map(department => `<div class="flex items-center justify-between"><span><i class="fas fa-building text-slate-400 mr-2"></i>${escHtml(department.name)}${department.area ? ` <span class="text-xs text-gray-400">(${escHtml(department.area)})</span>` : ''}</span><span><button onclick="openDepartmentEditor('${team.id}','${department.id}')" class="text-xs text-gray-500 hover:underline">Edit</button> <button onclick="deleteDepartment('${department.id}')" class="text-xs text-red-500 hover:underline">Delete</button></span></div>`).join('') : '<div class="text-xs text-gray-400">No departments</div>'}</div><div class="ml-5 mt-3 pl-4 border-l-2 border-emerald-100"><div class="text-xs text-gray-400 mb-1">Members</div>${(team.team_members || []).length ? team.team_members.map(member => `<div class="flex justify-between text-xs py-1"><span>${escHtml(member.name)}${member.role ? ` · ${escHtml(member.role)}` : ''}</span><span><button onclick="openMemberEditor('${team.id}','${member.id}')" class="text-gray-500 hover:underline">Edit</button> <button onclick="deleteMember('${member.id}')" class="text-red-500 hover:underline">Delete</button></span></div>`).join('') : '<div class="text-xs text-gray-400">No members</div>'}</div></div>`
+            ).join('');
+        }
+
+        window.openTeamEditor = async function (id) {
+            const team = teams.find(item => item.id === id);
+            const { value, isConfirmed } = await Swal.fire({
+                title: team ? 'Edit team' : 'Add team',
+                html: `<input id="swalTeamName" class="swal2-input" placeholder="Team name" value="${escHtml(team?.name || '')}"><input id="swalApoName" class="swal2-input" placeholder="APO name" value="${escHtml(team?.apo_name || '')}"><input id="swalScrumName" class="swal2-input" placeholder="Scrum Master name" value="${escHtml(team?.scrum_master_name || '')}">`,
+                focusConfirm: false,
+                showCancelButton: true,
+                preConfirm: () => ({
+                    name: document.getElementById(
+                        'swalTeamName').value.trim(),
+                    apo_name: document.getElementById('swalApoName').value
+                        .trim(),
+                    scrum_master_name: document.getElementById('swalScrumName').value
+                        .trim()
+                })
+            });
+            if (!isConfirmed || !value.name) return;
+            const payload = { ...value, owner_id: currentUser.id };
+            const request = team ? supabaseClient.from('teams').update(payload).eq('id', id).eq('owner_id',
+                currentUser.id) : supabaseClient.from('teams').insert([payload]);
+            const { error } = await request;
+            if (error) return showToast(`Team was not saved: ${error.message}`, 'error');
+            await loadTeams();
+            showToast('Team saved', 'success');
+        };
+
+        window.openDepartmentEditor = async function (teamId, id) {
+            const department = teams.flatMap(team => team.departments || []).find(item => item.id === id);
+            const { value, isConfirmed } = await Swal.fire({
+                title: department ? 'Edit department' : 'Add department',
+                html: `<input id="swalDepartmentName" class="swal2-input" placeholder="Department name" value="${escHtml(department?.name || '')}"><input id="swalDepartmentArea" class="swal2-input" placeholder="Area" value="${escHtml(department?.area || '')}">`,
+                focusConfirm: false,
+                showCancelButton: true,
+                preConfirm: () => ({
+                    name: document.getElementById(
+                        'swalDepartmentName').value.trim(),
+                    area: document.getElementById('swalDepartmentArea')
+                        .value.trim()
+                })
+            });
+            if (!isConfirmed || !value.name) return;
+            const request = department ? supabaseClient.from('departments').update(value).eq('id', id) :
+                supabaseClient.from('departments').insert([{
+                    ...value,
+                    team_id: teamId,
+                    owner_id: currentUser
+                        .id
+                }]);
+            const { error } = await request;
+            if (error) return showToast(`Department was not saved: ${error.message}`, 'error');
+            await loadTeams();
+            showToast('Department saved', 'success');
+        };
+        window.openMemberEditor = async function (teamId, id) {
+            const member = teams.flatMap(team => team.team_members || []).find(item => item.id === id);
+            const { value, isConfirmed } = await Swal.fire({
+                title: member ? 'Edit member' : 'Add member',
+                html: `<input id="swalMemberName" class="swal2-input" placeholder="Member name" value="${escHtml(member?.name || '')}"><input id="swalMemberEmail" class="swal2-input" placeholder="Email (optional)" value="${escHtml(member?.email || '')}"><input id="swalMemberRole" class="swal2-input" placeholder="Role (optional)" value="${escHtml(member?.role || '')}">`,
+                focusConfirm: false,
+                showCancelButton: true,
+                preConfirm: () => ({
+                    name: document.getElementById(
+                        'swalMemberName').value.trim(),
+                    email: document.getElementById('swalMemberEmail')
+                        .value.trim(),
+                    role: document.getElementById('swalMemberRole').value
+                        .trim()
+                })
+            });
+            if (!isConfirmed || !value.name) return;
+            const request = member ? supabaseClient.from('team_members').update(value).eq('id', id) :
+                supabaseClient.from('team_members').insert([{
+                    ...value,
+                    team_id: teamId,
+                    owner_id: currentUser
+                        .id
+                }]);
+            const { error } = await request;
+            if (error) return showToast(`Member was not saved: ${error.message}`, 'error');
+            await loadTeams();
+            showToast('Member saved', 'success');
+        };
+        window.deleteTeam = async id => {
+            if (!(await Swal.fire({
+                title: 'Delete team?',
+                text: 'Its departments will also be deleted.',
+                icon: 'warning',
+                showCancelButton: true
+            })).isConfirmed) return;
+            const { error } = await supabaseClient.from('teams').delete().eq('id', id).eq('owner_id', currentUser.id);
+            if (error) return showToast(error.message, 'error');
+            await loadTeams();
+        };
+        window.deleteDepartment = async id => {
+            const { error } = await supabaseClient.from('departments').delete().eq('id', id);
+            if (error) return showToast(error.message, 'error');
+            await loadTeams();
+        };
+        window.deleteMember = async id => {
+            const { error } = await supabaseClient.from('team_members').delete().eq('id', id);
+            if (error) return showToast(error.message, 'error');
+            await loadTeams();
+        };
+
+        async function loadWorkspaceData() {
+            if (!currentUser) return;
+            const load = async (key, table, order = 'created_at') => {
+                try {
+                    const { data, error } = await supabaseClient.from(table).select('*').order(order, { ascending: false });
+                    if (error) throw error;
+                    workspaceData[key] = data || [];
+                } catch (error) {
+                    console.warn(`Could not load ${table}`,
+                        error);
+                    workspaceData[key] = [];
+                }
+            };
+            await Promise.all([load('sprints', 'sprints'), load('approvals', 'time_approvals'), load('availability',
+                'team_availability', 'starts_at'), load('templates', 'task_templates'), load('notifications',
+                    'notifications'), load('activity', 'activity_log')]);
+            refreshWorkspace();
+        }
+
+        function selectedWorkspaceTeam() { return document.getElementById('workspaceTeamFilter')?.value || ''; }
+
+        function populateWorkspaceTeams() {
+            const select = document.getElementById('workspaceTeamFilter');
+            if (!select) return;
+            const value = select.value;
+            select.innerHTML = '<option value="">Select a team...</option>' + teams.map(t =>
+                `<option value="${t.id}">${escHtml(t.name)}</option>`).join('');
+            select.value = value;
+        }
+        window.refreshWorkspace = function () {
+            populateWorkspaceTeams();
+            const teamId = selectedWorkspaceTeam();
+            const content = document.getElementById('workspaceContent');
+            const empty = document.getElementById('workspaceEmpty');
+            if (!teamId) {
+                content?.classList.add('hidden');
+                empty?.classList.remove('hidden');
+                return;
+            }
+            empty?.classList.add('hidden');
+            content?.classList.remove('hidden');
+            const team = teams.find(t => t.id === teamId);
+            const teamTasks = tasks.filter(t => t.team_id === teamId);
+            const overdue = teamTasks.filter(t => t.due_date && t.status !== 'done' && new Date(`${t.due_date}T23:59:59`) <
+                new Date());
+            const done = teamTasks.filter(t => t.status === 'done');
+            const taskIds = new Set(teamTasks.map(t => t.id));
+            const hours = timeEntries.filter(x => taskIds.has(x.task_id)).reduce((sum, x) => sum + Number(x.hours || 0),
+                0);
+            const members = team?.team_members || [];
+            const capacity = Math.max(0, members.length * 40 - hours);
+            const cycleDays = done.length ? done.reduce((sum, task) => sum + Math.max(0, (new Date(task.updated_at ||
+                Date.now()) - new Date(task.created_at || Date.now())) / 86400000), 0) / done.length : 0;
+            document.getElementById('wsTaskCount').textContent = teamTasks.length;
+            document.getElementById('wsOverdueCount').textContent = overdue.length;
+            document.getElementById('wsHours').textContent = `${hours.toFixed(1)}h`;
+            document.getElementById('wsCompletion').textContent =
+                `${teamTasks.length ? Math.round(done.length / teamTasks.length * 100) : 0}%`;
+            document.getElementById('wsCycleTime').textContent = `${cycleDays.toFixed(1)}d`;
+            document.getElementById('wsCapacity').textContent = `${capacity.toFixed(1)}h`;
+            document.getElementById('workloadList').innerHTML = members.length ? members.map(member => {
+                const assigned = teamTasks.filter(t => t.assignee === member.name);
+                const estimate = assigned.reduce((sum, task) => sum + Number(task.time_estimate || 0), 0);
+                return `<div><div class="flex justify-between text-sm"><span>${escHtml(member.name)}</span><span>${assigned.length} tasks · ${estimate.toFixed(1)}h / 40h</span></div><div class="h-2 bg-gray-100 rounded mt-1"><div class="h-2 bg-indigo-500 rounded" style="width:${Math.min(100, estimate / 40 * 100)}%"></div></div></div>`;
+            }).join('') : '<div class="text-gray-400">Add team members to see capacity.</div>';
+            const sprints = workspaceData.sprints.filter(x => x.team_id === teamId);
+            document.getElementById('sprintsList').innerHTML = sprints.length ? sprints.map(s => {
+                const sprintTasks = teamTasks.filter(t => t.sprint_id === s.id);
+                const completed = sprintTasks.filter(t => t.status === 'done').length;
+                const points = sprintTasks.reduce((sum, task) => sum + Number(task.time_estimate || 0), 0);
+                const closed = sprintTasks.filter(t => t.status === 'done').reduce((sum, task) => sum +
+                    Number(task.time_estimate || 0), 0);
+                return `<div class="rounded-lg bg-gray-50 p-3"><div class="flex justify-between"><span class="font-medium">${escHtml(s.name)}</span><span class="text-xs text-indigo-600">${escHtml(s.status)}</span></div><div class="text-xs text-gray-400 mt-1">${escHtml(s.goal || 'No goal')} · ${s.start_date} → ${s.end_date}</div><div class="text-xs mt-2">Burndown: ${closed.toFixed(1)}h completed / ${points.toFixed(1)}h · ${completed}/${sprintTasks.length} tasks</div></div>`;
+            }).join('') : '<div class="text-gray-400">No sprints yet.</div>';
+            const approvalItems = workspaceData.approvals.filter(x => x.team_id === teamId);
+            document.getElementById('approvalsList').innerHTML = approvalItems.length ? approvalItems.map(item =>
+                `<div class="flex justify-between gap-2 border-b pb-2"><span>${escHtml(item.status)} · ${new Date(item.created_at).toLocaleDateString()}</span>${item.status === 'pending' ? `<span><button onclick="reviewApproval('${item.id}','approved')" class="text-emerald-600">Approve</button> <button onclick="reviewApproval('${item.id}','returned')" class="text-rose-600">Return</button></span>` : ''}</div>`
+            ).join('') : '<div class="text-gray-400">No time awaiting review.</div>';
+            const availability = workspaceData.availability.filter(x => x.team_id === teamId);
+            document.getElementById('availabilityList').innerHTML = availability.length ? availability.map(x =>
+                `<div><span class="font-medium">${escHtml(x.title)}</span><div class="text-xs text-gray-400">${new Date(x.starts_at).toLocaleDateString()} – ${new Date(x.ends_at).toLocaleDateString()}</div></div>`
+            ).join('') : '<div class="text-gray-400">No leave or availability events.</div>';
+            const templates = workspaceData.templates.filter(x => !x.team_id || x.team_id === teamId);
+            document.getElementById('templatesList').innerHTML = templates.length ? templates.map(x =>
+                `<div class="flex justify-between"><span>${escHtml(x.name)} <span class="text-xs text-gray-400">${Number(x.default_estimate || 0)}h</span></span><button onclick="createTaskFromTemplate('${x.id}')" class="text-indigo-600">Use</button></div>`
+            ).join('') : '<div class="text-gray-400">No templates yet.</div>';
+            document.getElementById('notificationsList').innerHTML = workspaceData.notifications.filter(x => !x
+                .team_id || x.team_id === teamId).slice(0, 6).map(x =>
+                    `<div class="border-b pb-2"><span class="font-medium">${escHtml(x.title)}</span><div class="text-xs text-gray-400">${escHtml(x.body || '')}</div></div>`
+                ).join('') || '<div class="text-gray-400">No notifications.</div>';
+            document.getElementById('activityList').innerHTML = workspaceData.activity.filter(x => !x.team_id || x
+                .team_id === teamId).slice(0, 6).map(x =>
+                    `<div class="border-b pb-2"><span class="font-medium">${escHtml(x.action)}</span><div class="text-xs text-gray-400">${new Date(x.created_at).toLocaleString()}</div></div>`
+                ).join('') || '<div class="text-gray-400">No activity yet.</div>';
+        };
+        async function workspaceInsert(table, payload, message) {
+            const { error } = await supabaseClient.from(table).insert([payload]);
+            if (error) return showToast(error.message, 'error');
+            await loadWorkspaceData();
+            showToast(message, 'success');
+        }
+        window.openSprintEditor = async () => {
+            const teamId = selectedWorkspaceTeam();
+            if (!teamId) return;
+            const { value, isConfirmed } = await Swal.fire({
+                title: 'New sprint',
+                html: '<input id="sprintName" class="swal2-input" placeholder="Sprint name"><input id="sprintGoal" class="swal2-input" placeholder="Sprint goal"><input id="sprintStart" type="date" class="swal2-input"><input id="sprintEnd" type="date" class="swal2-input">',
+                showCancelButton: true,
+                preConfirm: () => ({
+                    name: document.getElementById('sprintName').value
+                        .trim(),
+                    goal: document.getElementById('sprintGoal').value.trim(),
+                    start_date: document.getElementById('sprintStart').value,
+                    end_date: document
+                        .getElementById('sprintEnd').value
+                })
+            });
+            if (!isConfirmed || !value.name || !value.start_date || !value.end_date) return;
+            workspaceInsert('sprints', {
+                ...value,
+                team_id: teamId,
+                owner_id: currentUser.id,
+                status: 'planned'
+            },
+                'Sprint created');
+        };
+        window.openTemplateEditor = async () => {
+            const teamId = selectedWorkspaceTeam();
+            const { value, isConfirmed } = await Swal.fire({
+                title: 'Task template',
+                html: '<input id="templateName" class="swal2-input" placeholder="Template name"><textarea id="templateDesc" class="swal2-textarea" placeholder="Description"></textarea><input id="templateHours" type="number" class="swal2-input" placeholder="Estimate (hours)">',
+                showCancelButton: true,
+                preConfirm: () => ({
+                    name: document.getElementById('templateName')
+                        .value.trim(),
+                    description: document.getElementById('templateDesc').value
+                        .trim(),
+                    default_estimate: Number(document.getElementById('templateHours')
+                        .value || 0)
+                })
+            });
+            if (!isConfirmed || !value.name) return;
+            workspaceInsert('task_templates', {
+                ...value,
+                team_id: teamId,
+                owner_id: currentUser.id
+            },
+                'Template saved');
+        };
+        window.createTaskFromTemplate = id => {
+            const template = workspaceData.templates.find(x => x.id === id);
+            if (!template) return;
+            openTaskModal({
+                title: template.name,
+                description: template.description,
+                time_estimate: template.default_estimate,
+                team_id: selectedWorkspaceTeam()
+            });
+        };
+        window.openAvailabilityEditor = async () => {
+            const teamId = selectedWorkspaceTeam();
+            const { value, isConfirmed } = await Swal.fire({
+                title: 'Leave / availability',
+                html: '<input id="availabilityTitle" class="swal2-input" placeholder="Name or event"><input id="availabilityStart" type="datetime-local" class="swal2-input"><input id="availabilityEnd" type="datetime-local" class="swal2-input">',
+                showCancelButton: true,
+                preConfirm: () => ({
+                    title: document.getElementById('availabilityTitle')
+                        .value.trim(),
+                    starts_at: document.getElementById('availabilityStart').value,
+                    ends_at: document.getElementById('availabilityEnd').value
+                })
+            });
+            if (!isConfirmed || !value.title || !value.starts_at || !value.ends_at) return;
+            workspaceInsert('team_availability', {
+                ...value,
+                team_id: teamId,
+                owner_id: currentUser.id
+            },
+                'Calendar event saved');
+        };
+        window.submitMyTimeForApproval = async () => {
+            const teamId = selectedWorkspaceTeam();
+            const taskIds = new Set(tasks.filter(t => t.team_id === teamId).map(t => t.id));
+            const entry = timeEntries.find(x => taskIds.has(x.task_id));
+            if (!entry) return showToast('No team time entry available to submit', 'info');
+            workspaceInsert('time_approvals', {
+                time_entry_id: entry.id,
+                team_id: teamId,
+                submitted_by: currentUser
+                    .id
+            }, 'Time submitted for approval');
+        };
+        window.reviewApproval = async (id, status) => {
+            const note = status === 'returned' ? (await Swal.fire({
+                title: 'Return note',
+                input: 'text',
+                showCancelButton: true
+            })).value : '';
+            const { error } = await supabaseClient.from('time_approvals').update({
+                status,
+                reviewer_note: note ||
+                    null,
+                reviewed_by: currentUser.id,
+                reviewed_at: new Date().toISOString()
+            }).eq('id', id);
+            if (error) return showToast(error.message, 'error');
+            await loadWorkspaceData();
+        };
+        window.createBackupSnapshot = async () => {
+            const snapshot = { tasks, notes, meetings, timeEntries, files, emails, teams, workspaceData };
+            workspaceInsert('backup_snapshots', {
+                owner_id: currentUser.id,
+                label: `Backup ${new Date().toLocaleString()}`,
+                snapshot
+            },
+                'Backup snapshot created');
+        };
+
+        async function persistTimerState(timerKind, state) {
+            if (!currentUser) return;
+            const { error } = await supabaseClient.from('timer_states').upsert({
+                user_id: currentUser.id,
+                timer_kind: timerKind,
+                state,
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'user_id,timer_kind' });
+            if (error) console.warn('Could not sync timer state', error);
+        }
+
+        async function restoreTimers() {
+            try {
+                const { data, error } = await supabaseClient.from('timer_states').select('*').eq('user_id', currentUser
+                    .id);
+                if (error) throw error;
+                const byKind = Object.fromEntries((data || []).map(item => [item.timer_kind, item.state]));
+                if (byKind.task) restoreTaskTimer(byKind.task);
+                else resumeTimerFromStorage();
+                if (byKind.work) restoreWorkTimer(byKind.work);
+                else resumeWorkTimerFromStorage();
+            } catch (error) {
+                console.warn('Could not restore timers from Supabase', error);
+                resumeTimerFromStorage();
+                resumeWorkTimerFromStorage();
+            }
+        }
+
+        function restoreTaskTimer(state) {
+            localStorage.setItem('timerState', JSON.stringify(state));
+            resumeTimerFromStorage();
+        }
+
+        function restoreWorkTimer(state) {
+            localStorage.setItem('workTimerState', JSON.stringify(state));
+            resumeWorkTimerFromStorage();
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 10. RENDER: TASKS
+        // ──────────────────────────────────────────────────────────────
+        function renderTasks() {
+            const searchTerm = document.getElementById('taskSearch')?.value?.toLowerCase() || '';
+            const todoCol = document.getElementById('todoColumn');
+            const progressCol = document.getElementById('progressColumn');
+            const reviewCol = document.getElementById('reviewColumn');
+            const doneCol = document.getElementById('doneColumn');
+            todoCol.innerHTML = '';
+            progressCol.innerHTML = '';
+            reviewCol.innerHTML = '';
+            doneCol.innerHTML = '';
+
+            let filtered = tasks;
+            const teamFilter = document.getElementById('taskTeamFilter')?.value || '';
+            if (teamFilter) filtered = filtered.filter(task => task.team_id === teamFilter);
+            const assigneeFilter = document.getElementById('taskAssigneeFilter')?.value || '';
+            const statusFilter = document.getElementById('taskStatusFilter')?.value || '';
+            const dueFrom = document.getElementById('taskDueFrom')?.value || '';
+            const dueTo = document.getElementById('taskDueTo')?.value || '';
+            if (assigneeFilter) filtered = filtered.filter(task => task.assignee === assigneeFilter);
+            if (statusFilter) filtered = filtered.filter(task => task.status === statusFilter);
+            if (dueFrom) filtered = filtered.filter(task => task.due_date && task.due_date >= dueFrom);
+            if (dueTo) filtered = filtered.filter(task => task.due_date && task.due_date <= dueTo);
+            if (searchTerm) {
+                filtered = tasks.filter(t => t.title.toLowerCase().includes(searchTerm) || (t.description || '')
+                    .toLowerCase().includes(searchTerm) || (t.assignee || '').toLowerCase().includes(searchTerm) || (
+                        t.tags || '').toLowerCase().includes(searchTerm));
+            }
+
+            const todo = filtered.filter(t => t.status === 'todo');
+            const progress = filtered.filter(t => t.status === 'in-progress');
+            const review = filtered.filter(t => t.status === 'in-review');
+            const done = filtered.filter(t => t.status === 'done');
+
+            document.getElementById('todoCount').textContent = todo.length;
+            document.getElementById('progressCount').textContent = progress.length;
+            document.getElementById('reviewCount').textContent = review.length;
+            document.getElementById('doneCount').textContent = done.length;
+
+            todo.forEach(t => todoCol.appendChild(createTaskCard(t)));
+            progress.forEach(t => progressCol.appendChild(createTaskCard(t)));
+            review.forEach(t => reviewCol.appendChild(createTaskCard(t)));
+            done.forEach(t => doneCol.appendChild(createTaskCard(t)));
+            setupDragDrop();
+        }
+
+        function createTaskCard(task) {
+            const div = document.createElement('div');
+            div.className =
+                'task-card bg-white rounded-lg p-3.5 shadow-sm border border-gray-200/80 hover:shadow-md transition';
+            div.dataset.id = task.id;
+            div.draggable = true;
+
+            const statusMap = {
+                'todo': 'To Do',
+                'in-progress': 'In Progress',
+                'in-review': 'In Review',
+                'done': 'Done'
+            };
+            const tags = (task.tags || '').split(',').filter(t => t.trim());
+
+            const container = document.createElement('div');
+            container.className = 'flex items-start justify-between';
+
+            const left = document.createElement('div');
+            left.className = 'flex-1 min-w-0';
+
+            const titleRow = document.createElement('div');
+            titleRow.className = 'text-sm font-semibold text-gray-800 truncate flex items-center gap-1';
+            if (task.blocked_by && tasks.some(t => t.id === task.blocked_by && t.status !== 'done')) {
+                const span = document.createElement('span');
+                span.className = 'text-red-500 text-xs';
+                span.title = 'Blocked';
+                span.innerHTML = '<i class="fas fa-ban"></i>';
+                titleRow.appendChild(span);
+            }
+            const dueDate = task.due_date ? new Date(task.due_date) : null;
+            const isOverdue = dueDate && dueDate < new Date() && task.status !== 'done';
+            if (isOverdue) {
+                const span = document.createElement('span');
+                span.className = 'text-red-500 text-xs';
+                span.title = 'Overdue';
+                span.innerHTML = '<i class="fas fa-exclamation-circle"></i>';
+                titleRow.appendChild(span);
+            }
+            const titleText = document.createElement('span');
+            titleText.innerHTML = escHtml(task.title);
+            titleRow.appendChild(titleText);
+            left.appendChild(titleRow);
+
+            if (task.description) {
+                const desc = document.createElement('div');
+                desc.className = 'text-xs text-gray-400 mt-0.5 line-clamp-2';
+                desc.innerHTML = escHtml(task.description);
+                left.appendChild(desc);
+            }
+
+            const meta = document.createElement('div');
+            meta.className = 'flex items-center gap-1 mt-2 flex-wrap';
+            if (task.assignee) {
+                const sp = document.createElement('span');
+                sp.className = 'text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full naming';
+                sp.textContent = '👤 ' + task.assignee;
+                meta.appendChild(sp);
+            }
+            if (task.time_estimate) {
+                const sp = document.createElement('span');
+                sp.className = 'text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full';
+                sp.textContent = `⏱ ${task.time_estimate}h`;
+                meta.appendChild(sp);
+            }
+            if (task.due_date) {
+                const sp = document.createElement('span');
+                sp.className =
+                    `text-xs ${isOverdue ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'} px-2 py-0.5 rounded-full`;
+                sp.textContent = `📅 ${new Date(task.due_date).toLocaleDateString()}`;
+                meta.appendChild(sp);
+            }
+            if (task.time) {
+                const sp = document.createElement('span');
+                sp.className = 'text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full';
+                sp.textContent = `🕐 ${task.time}`;
+                meta.appendChild(sp);
+            }
+            if (task.recurrence && task.recurrence !== 'none') {
+                const sp = document.createElement('span');
+                sp.className = 'text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full';
+                sp.textContent = `🔄 ${task.recurrence}`;
+                meta.appendChild(sp);
+            }
+            tags.forEach(t => {
+                const sp = document.createElement('span');
+                sp.className = 'tag-badge bg-indigo-100 text-indigo-700 urgency';
+                sp.innerHTML = escHtml(t.trim());
+                meta.appendChild(sp);
+            });
+            const statusSpan = document.createElement('span');
+            statusSpan.className = `text-[10px] px-2 py-0.5 rounded-full status-${task.status}`;
+            statusSpan.textContent = statusMap[task.status] || task.status;
+            meta.appendChild(statusSpan);
+            left.appendChild(meta);
+            if (task.blocked_by && tasks.some(t => t.id === task.blocked_by && t.status !== 'done')) {
+                const blockedNote = document.createElement('div');
+                blockedNote.className = 'text-xs text-red-500 mt-1';
+                blockedNote.textContent = '⛔ Blocked by another task';
+                left.appendChild(blockedNote);
+            }
+
+            const right = document.createElement('div');
+            right.className = 'flex items-center gap-1 ml-2 flex-shrink-0';
+            const editBtn = document.createElement('button');
+            editBtn.className = 'text-gray-400 hover:text-indigo-600 text-xs p-1 rounded hover:bg-gray-100 transition';
+            editBtn.title = 'Edit';
+            editBtn.draggable = false;
+            editBtn.innerHTML = '<i class="fas fa-pen"></i>';
+            editBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+            editBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                editTask(task.id);
+            });
+            const delBtn = document.createElement('button');
+            delBtn.className = 'text-gray-400 hover:text-red-500 text-xs p-1 rounded hover:bg-gray-100 transition';
+            delBtn.title = 'Delete';
+            delBtn.draggable = false;
+            delBtn.innerHTML = '<i class="fas fa-trash"></i>';
+            delBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+            delBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteTask(task.id);
+            });
+
+            right.appendChild(editBtn);
+            right.appendChild(delBtn);
+
+            container.appendChild(left);
+            container.appendChild(right);
+            div.appendChild(container);
+            return div;
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 11. DRAG & DROP
+        // ──────────────────────────────────────────────────────────────
+        function setupDragDrop() {
+            sortableInstances.forEach(s => s.destroy());
+            sortableInstances = [];
+            ['todoColumn', 'progressColumn', 'reviewColumn', 'doneColumn'].forEach(colId => {
+                const el = document.getElementById(colId);
+                if (!el) return;
+                const sortable = new Sortable(el, {
+                    group: 'tasks',
+                    animation: 150,
+                    ghostClass: 'dragging',
+                    onEnd: async function (evt) {
+                        const taskId = evt.item.dataset.id;
+                        const newStatus = evt.to.dataset.status;
+                        if (!taskId || !newStatus) return;
+                        const task = tasks.find(t => t.id === taskId);
+                        if (task && task.status !== newStatus) {
+                            task.status = newStatus;
+                            try {
+                                await supabaseClient.from('tasks').update({
+                                    status: newStatus,
+                                    updated_at: new Date().toISOString()
+                                }).eq('id', taskId).eq(
+                                    'user_id', currentUser.id);
+                                updateDashboard();
+                                renderTasks();
+                                showToast(`Task moved to ${newStatus}`, 'success');
+                            } catch (_) {
+                                await Swal.fire({
+                                    icon: 'error',
+                                    title: 'Update Failed',
+                                    text: 'Could not update task status. Please try again.'
+                                });
+                            }
+                        }
+                    }
+                });
+                sortableInstances.push(sortable);
+            });
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 12. CRUD: TASKS
+        // ──────────────────────────────────────────────────────────────
+        function openTaskModal(data, presetTime) {
+            document.getElementById('taskEditId').value = data?.id || '';
+            document.getElementById('taskModalTitle').textContent = data ? 'Edit Task' : 'New Task';
+            document.getElementById('taskTitle').value = data?.title || '';
+            document.getElementById('taskDesc').value = data?.description || '';
+            document.getElementById('taskStatus').value = data?.status || 'todo';
+            document.getElementById('taskEstimate').value = data?.time_estimate || '';
+            document.getElementById('taskDueDate').value = data?.due_date || '';
+            document.getElementById('taskTime').value = data?.time || presetTime || '';
+            document.getElementById('taskRecurrence').value = data?.recurrence || 'none';
+            populateTeamSelect('taskTeamId', data?.team_id);
+            populateTaskAssignees(data?.assignee || '');
+            populateSprintSelect(data?.sprint_id || '');
+            document.getElementById('taskTags').value = data?.tags || '';
+            document.getElementById('taskBlockedBy').value = data?.blocked_by || '';
+            populateBlockedBySelect(data?.id, data?.blocked_by);
+            document.getElementById('taskCommentsSection').classList.toggle('hidden', !data?.id);
+            if (data?.id) {
+                loadTaskComments(data.id);
+                populateTaskFileLinks();
+            }
+            document.getElementById('taskModal').classList.remove('hidden');
+        }
+        window.openTaskModal = openTaskModal;
+
+        function populateBlockedBySelect(currentTaskId, blockedById) {
+            const sel = document.getElementById('taskBlockedBy');
+            sel.innerHTML = '<option value="">None</option>';
+            tasks.filter(t => t.id !== currentTaskId).forEach(t => {
+                const opt = document.createElement('option');
+                opt.value = t.id;
+                opt.textContent = t.title;
+                sel.appendChild(opt);
+            });
+            sel.value = blockedById || '';
+        }
+
+        function editTask(id) {
+            const task = tasks.find(t => t.id === id);
+            if (task) { openTaskModal(task); } else {
+                document.getElementById('taskEditId').value = id;
+                document.getElementById('taskModalTitle').textContent = 'Edit Task';
+                document.getElementById('taskModal').classList.remove('hidden');
+            }
+        }
+        window.editTask = editTask;
+
+        window.assignToMe = function () {
+            const name = profileSettings.display_name || currentUser.email?.split('@')[0] || 'Me';
+            document.getElementById('taskAssignee').value = name;
+            showToast(`Assigned to ${name}`, 'info');
+        };
+
+        async function loadTaskComments(taskId) {
+            const list = document.getElementById('taskCommentsList');
+            if (!list) return;
+            const { data, error } = await supabaseClient.from('task_comments').select('*').eq('task_id', taskId).order(
+                'created_at');
+            if (error) {
+                list.innerHTML = '<div class="text-red-400">Comments unavailable until the migration is run.</div>';
+                return;
+            }
+            list.innerHTML = (data || []).map(comment =>
+                `<div class="bg-gray-50 rounded p-2"><span class="font-medium">${escHtml(comment.author_name || 'Member')}</span> · ${escHtml(comment.body)}<span class="text-gray-400 ml-1">${new Date(comment.created_at).toLocaleString()}</span></div>`
+            ).join('') || '<div class="text-gray-400">No comments yet.</div>';
+        }
+        window.addTaskComment = async function () {
+            const taskId = document.getElementById('taskEditId').value;
+            const body = document.getElementById('taskCommentBody').value.trim();
+            if (!taskId || !body) return;
+            const task = tasks.find(item => item.id === taskId);
+            const author_name = profileSettings.display_name || currentUser.email;
+            const { error } = await supabaseClient.from('task_comments').insert([{
+                task_id: taskId,
+                user_id: currentUser
+                    .id,
+                author_name,
+                body
+            }]);
+            if (error) return showToast(error.message, 'error');
+            document.getElementById('taskCommentBody').value = '';
+            await supabaseClient.from('activity_log').insert([{
+                owner_id: currentUser.id,
+                team_id: task?.team_id ||
+                    null,
+                entity_type: 'task',
+                entity_id: taskId,
+                action: 'Comment added',
+                details: { body }
+            }]);
+            if (body.includes('@')) await supabaseClient.from('notifications').insert([{
+                user_id: currentUser.id,
+                team_id: task?.team_id || null,
+                title: 'You were mentioned in a task comment',
+                body,
+                type: 'mention'
+            }]);
+            loadTaskComments(taskId);
+            loadWorkspaceData();
+        };
+
+        function populateTaskFileLinks() {
+            const select = document.getElementById('taskFileLink');
+            if (!select) return;
+            select.innerHTML = '<option value="">Attach an uploaded file...</option>' + files.filter(file => file
+                .type !== 'folder').map(file => `<option value="${file.id}">${escHtml(file.name)}</option>`).join('');
+        }
+        window.attachFileToTask = async function () {
+            const taskId = document.getElementById('taskEditId').value;
+            const fileId = document.getElementById('taskFileLink').value;
+            if (!taskId || !fileId) return;
+            const { data, error } = await supabaseClient.from('file_links').select('version_number').eq('file_id',
+                fileId).eq('entity_type', 'task').eq('entity_id', taskId).order('version_number', { ascending: false })
+                .limit(1);
+            if (error) return showToast(error.message, 'error');
+            const version_number = (data?.[0]?.version_number || 0) + 1;
+            const result = await supabaseClient.from('file_links').insert([{
+                file_id: fileId,
+                entity_type: 'task',
+                entity_id: taskId,
+                version_number
+            }]);
+            if (result.error) return showToast(result.error.message, 'error');
+            showToast(`File attached as version ${version_number}`, 'success');
+        };
+
+        async function saveTask() {
+            const id = document.getElementById('taskEditId').value;
+            const title = document.getElementById('taskTitle').value.trim();
+            if (!title) {
+                await Swal.fire({ icon: 'warning', title: 'Missing Title', text: 'Task title is required.' });
+                return;
+            }
+            const teamId = document.getElementById('taskTeamId').value;
+            const assignee = document.getElementById('taskAssignee').value;
+            if (!teamId) {
+                await Swal.fire({ icon: 'warning', title: 'Select a Team', text: 'Every task must belong to a team.' });
+                return;
+            }
+            if (!assignee) {
+                await Swal.fire({
+                    icon: 'warning',
+                    title: 'Select an Assignee',
+                    text: 'Choose a member of the selected team.'
+                });
+                return;
+            }
+            const payload = {
+                title,
+                description: document.getElementById('taskDesc').value.trim(),
+                status: document.getElementById('taskStatus').value,
+                assignee,
+                time_estimate: parseFloat(document.getElementById('taskEstimate').value) || 0,
+                due_date: document.getElementById('taskDueDate').value || null,
+                time: document.getElementById('taskTime').value || null,
+                recurrence: document.getElementById('taskRecurrence').value || 'none',
+                team_id: teamId,
+                sprint_id: document.getElementById('taskSprintId').value || null,
+                tags: document.getElementById('taskTags').value.trim(),
+                blocked_by: document.getElementById('taskBlockedBy').value.trim() || null,
+                user_id: currentUser.id,
+                updated_at: new Date().toISOString()
+            };
+            try {
+                if (id) {
+                    const { error } = await supabaseClient.from('tasks').update(payload).eq('id', id).eq('user_id',
+                        currentUser.id);
+                    if (error) throw error;
+                    showToast('Task updated!', 'success');
+                } else {
+                    payload.created_at = new Date().toISOString();
+                    const { error } = await supabaseClient.from('tasks').insert([payload]);
+                    if (error) throw error;
+                    showToast('Task created!', 'success');
+                }
+                await supabaseClient.from('activity_log').insert([{
+                    owner_id: currentUser.id,
+                    team_id: teamId,
+                    entity_type: 'task',
+                    entity_id: id || null,
+                    action: id ? 'Task updated' : 'Task created',
+                    details: { title, assignee }
+                }]);
+                await supabaseClient.from('notifications').insert([{
+                    user_id: currentUser.id,
+                    team_id: teamId,
+                    title: id ? 'Task updated' : 'Task assigned',
+                    body: `${title} → ${assignee}`,
+                    type: 'task'
+                }]);
+                closeModal('taskModal');
+                await loadTasks();
+                renderTasks();
+                updateDashboard();
+                populateTimerSelect();
+                populateReportAssigneeFilter();
+                renderCalendar();
+                renderPlanner();
+            } catch (_) {
+                await Swal.fire({ icon: 'error', title: 'Save Failed', text: 'Could not save task.' });
+            }
+        }
+        window.saveTask = saveTask;
+
+        async function deleteTask(id) {
+            const confirm = await Swal.fire({
+                title: 'Delete Task?',
+                text: 'This action cannot be undone.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                cancelButtonColor: '#6b7280',
+                confirmButtonText: 'Yes, delete'
+            });
+            if (!confirm.isConfirmed) return;
+            try {
+                const { error } = await supabaseClient.from('tasks').delete().eq('id', id).eq('user_id', currentUser.id);
+                if (error) throw error;
+                showToast('Task deleted', 'info');
+                await loadTasks();
+                renderTasks();
+                updateDashboard();
+                populateTimerSelect();
+                populateReportAssigneeFilter();
+                renderCalendar();
+                renderPlanner();
+            } catch (_) {
+                await Swal.fire({ icon: 'error', title: 'Delete Failed', text: 'Could not delete task.' });
+            }
+        }
+        window.deleteTask = deleteTask;
+
+        // ──────────────────────────────────────────────────────────────
+        // 13. CRUD: NOTES
+        // ──────────────────────────────────────────────────────────────
+        function openNoteModal(data) {
+            document.getElementById('noteEditId').value = data?.id || '';
+            document.getElementById('noteModalTitle').textContent = data ? 'Edit Note' : 'New Note';
+            document.getElementById('noteTitle').value = data?.title || '';
+            document.getElementById('noteContent').value = data?.content || '';
+            document.getElementById('noteTags').value = data?.tags || '';
+            document.getElementById('noteModal').classList.remove('hidden');
+        }
+        window.openNoteModal = openNoteModal;
+
+        function editNote(id) {
+            try {
+                if (typeof window.openInlineEditor === 'function') { window.openInlineEditor(id); return; }
+                throw new Error('openInlineEditor not defined');
+            } catch (_) {
+                document.getElementById('taskModal')?.classList.add('hidden');
+                document.getElementById('noteEditId').value = id;
+                document.getElementById('noteModalTitle').textContent = 'Edit Note';
+                document.getElementById('noteModal').classList.remove('hidden');
+            }
+        }
+        window.editNote = editNote;
+
+        async function saveNote() {
+            const id = document.getElementById('noteEditId').value;
+            const title = document.getElementById('noteTitle').value.trim();
+            if (!title) {
+                await Swal.fire({ icon: 'warning', title: 'Missing Title', text: 'Note title is required.' });
+                return;
+            }
+            const payload = {
+                title,
+                content: document.getElementById('noteContent').value.trim(),
+                tags: document.getElementById('noteTags').value.trim(),
+                user_id: currentUser.id,
+                updated_at: new Date().toISOString()
+            };
+            try {
+                if (id) {
+                    const { error } = await supabaseClient.from('notes').update(payload).eq('id', id).eq('user_id',
+                        currentUser.id);
+                    if (error) throw error;
+                    showToast('Note updated!', 'success');
+                } else {
+                    payload.created_at = new Date().toISOString();
+                    const { error } = await supabaseClient.from('notes').insert([payload]);
+                    if (error) throw error;
+                    showToast('Note created!', 'success');
+                }
+                closeModal('noteModal');
+                await loadNotes();
+                renderNotes();
+                updateDashboard();
+            } catch (_) {
+                await Swal.fire({ icon: 'error', title: 'Save Failed', text: 'Could not save note.' });
+            }
+        }
+        window.saveNote = saveNote;
+
+        async function deleteNote(id) {
+            const confirm = await Swal.fire({
+                title: 'Delete Note?',
+                text: 'This action cannot be undone.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                cancelButtonColor: '#6b7280',
+                confirmButtonText: 'Yes, delete'
+            });
+            if (!confirm.isConfirmed) return;
+            try {
+                const { error } = await supabaseClient.from('notes').delete().eq('id', id).eq('user_id', currentUser.id);
+                if (error) throw error;
+                showToast('Note deleted', 'info');
+                await loadNotes();
+                renderNotes();
+                updateDashboard();
+            } catch (_) {
+                await Swal.fire({ icon: 'error', title: 'Delete Failed', text: 'Could not delete note.' });
+            }
+        }
+        window.deleteNote = deleteNote;
+
+        function renderNotes() {
+            const searchTerm = document.getElementById('noteSearch')?.value?.toLowerCase() || '';
+            const container = document.getElementById('notesList');
+            let filtered = notes;
+            if (searchTerm) {
+                filtered = notes.filter(n => n.title.toLowerCase().includes(searchTerm) || (n.content || '').toLowerCase()
+                    .includes(searchTerm) || (n.tags || '').toLowerCase().includes(searchTerm));
+            }
+            if (filtered.length === 0) {
+                container.innerHTML =
+                    `<div class="col-span-full text-center py-10 text-gray-300 text-sm">No notes found. Create your first note!</div>`;
+                return;
+            }
+            container.innerHTML = filtered.map(n => {
+                const tags = (n.tags || '').split(',').filter(t => t.trim());
+                const tagHtml = tags.map(t =>
+                    `<span class="tag-badge bg-rose-100 text-rose-700">${escHtml(t.trim())}</span>`).join('');
+                return `
+                            <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 card-hover">
+                                <div class="flex items-start justify-between">
+                                    <div class="flex-1 min-w-0">
+                                        <h4 class="text-sm font-semibold text-gray-800 truncate">${escHtml(n.title)}</h4>
+                                        <p class="text-xs text-gray-400 mt-1 line-clamp-3">${escHtml(n.content || '')}</p>
+                                        <div class="flex items-center gap-1 mt-2 flex-wrap">${tagHtml}</div>
+                                        <span class="text-[10px] text-gray-400 mt-2 block">${new Date(n.created_at).toLocaleDateString()}</span>
+                                    </div>
+                                    <div class="flex gap-1 ml-2 flex-shrink-0">
+                                        <button onclick="editNote('${n.id}')" class="text-gray-400 hover:text-rose-600 text-xs p-1 rounded hover:bg-gray-100 transition"><i class="fas fa-pen"></i></button>
+                                        <button onclick="deleteNote('${n.id}')" class="text-gray-400 hover:text-red-500 text-xs p-1 rounded hover:bg-gray-100 transition"><i class="fas fa-trash"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+            }).join('');
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 14. CRUD: MEETINGS
+        // ──────────────────────────────────────────────────────────────
+        function openMeetingModal(data) {
+            document.getElementById('meetingEditId').value = data?.id || '';
+            document.getElementById('meetingModalTitle').textContent = data ? 'Edit Meeting' : 'New Meeting';
+            document.getElementById('meetingTitle').value = data?.title || '';
+            document.getElementById('meetingLink').value = data?.link || '';
+            document.getElementById('meetingDesc').value = data?.description || '';
+            document.getElementById('meetingDate').value = data?.meeting_date ? data.meeting_date.slice(0, 16) : '';
+            document.getElementById('meetingRecurrence').value = data?.recurrence || 'none';
+            document.getElementById('meetingModal').classList.remove('hidden');
+        }
+        window.openMeetingModal = openMeetingModal;
+
+        function editMeeting(id) { const m = meetings.find(m => m.id === id); if (m) openMeetingModal(m); }
+        window.editMeeting = editMeeting;
+
+        async function saveMeeting() {
+            const id = document.getElementById('meetingEditId').value;
+            const title = document.getElementById('meetingTitle').value.trim();
+            const link = document.getElementById('meetingLink').value.trim();
+            if (!title || !link) {
+                await Swal.fire({ icon: 'warning', title: 'Missing Fields', text: 'Title and Link are required.' });
+                return;
+            }
+            const payload = {
+                title,
+                link,
+                description: document.getElementById('meetingDesc').value.trim(),
+                meeting_date: document.getElementById('meetingDate').value || new Date().toISOString().slice(0, 16),
+                recurrence: document.getElementById('meetingRecurrence').value || 'none',
+                user_id: currentUser.id,
+                updated_at: new Date().toISOString()
+            };
+            try {
+                if (id) {
+                    const { error } = await supabaseClient.from('meetings').update(payload).eq('id', id).eq('user_id',
+                        currentUser.id);
+                    if (error) throw error;
+                    showToast('Meeting updated!', 'success');
+                } else {
+                    payload.created_at = new Date().toISOString();
+                    const { error } = await supabaseClient.from('meetings').insert([payload]);
+                    if (error) throw error;
+                    showToast('Meeting added!', 'success');
+                }
+                closeModal('meetingModal');
+                await loadMeetings();
+                renderMeetings();
+                updateDashboard();
+                renderCalendar();
+                renderPlanner();
+                notifiedMeetingIds.clear();
+                checkUpcomingMeetings();
+            } catch (_) {
+                await Swal.fire({ icon: 'error', title: 'Save Failed', text: 'Could not save meeting.' });
+            }
+        }
+        window.saveMeeting = saveMeeting;
+
+        async function deleteMeeting(id) {
+            const confirm = await Swal.fire({
+                title: 'Delete Meeting?',
+                text: 'This action cannot be undone.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                cancelButtonColor: '#6b7280',
+                confirmButtonText: 'Yes, delete'
+            });
+            if (!confirm.isConfirmed) return;
+            try {
+                const { error } = await supabaseClient.from('meetings').delete().eq('id', id).eq('user_id', currentUser
+                    .id);
+                if (error) throw error;
+                showToast('Meeting deleted', 'info');
+                await loadMeetings();
+                renderMeetings();
+                updateDashboard();
+                renderCalendar();
+                renderPlanner();
+            } catch (_) {
+                await Swal.fire({ icon: 'error', title: 'Delete Failed', text: 'Could not delete meeting.' });
+            }
+        }
+        window.deleteMeeting = deleteMeeting;
+
+        function renderMeetings() {
+            const container = document.getElementById('meetingsList');
+            if (meetings.length === 0) {
+                container.innerHTML =
+                    `<div class="text-center py-10 text-gray-300 text-sm">No meetings added yet.</div>`;
+                return;
+            }
+            const now = Date.now();
+            container.innerHTML = meetings.map(m => {
+                const isSoon = m.meeting_date && new Date(m.meeting_date).getTime() > now &&
+                    new Date(m.meeting_date).getTime() <= now + (profileSettings.reminder_minutes || 15) *
+                    60000;
+                return `
+                            <div class="bg-white rounded-xl p-4 shadow-sm border ${isSoon ? 'border-amber-300 ring-1 ring-amber-200' : 'border-gray-100'} flex flex-wrap items-center justify-between gap-3">
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center gap-2"><span class="text-lg">🎥</span><span class="font-semibold text-gray-800">${escHtml(m.title)}</span>${m.meeting_date ? `<span class="text-xs text-gray-400">${new Date(m.meeting_date).toLocaleString()}</span>` : ''}${m.recurrence === 'weekly' ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">Every week</span>` : ''}${isSoon ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Starting soon</span>` : ''}</div>
+                                    ${m.description ? `<p class="text-sm text-gray-500 mt-0.5">${escHtml(m.description)}</p>` : ''}
+                                    <a href="${escHtml(m.link)}" target="_blank" class="text-sm text-blue-600 hover:underline break-all">${escHtml(m.link)}</a>
+                                </div>
+                                <div class="flex gap-1 flex-shrink-0">
+                                    <button onclick="editMeeting('${m.id}')" class="text-gray-400 hover:text-blue-600 text-sm p-1.5 rounded hover:bg-gray-100 transition"><i class="fas fa-pen"></i></button>
+                                    <button onclick="deleteMeeting('${m.id}')" class="text-gray-400 hover:text-red-500 text-sm p-1.5 rounded hover:bg-gray-100 transition"><i class="fas fa-trash"></i></button>
+                                </div>
+                            </div>
+                        `;
+            }).join('');
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 15. CALENDAR
+        // ──────────────────────────────────────────────────────────────
+        function meetingOccursOnDate(meeting, dateObj) {
+            if (!meeting.meeting_date) return false;
+            const meetingDate = new Date(meeting.meeting_date);
+            if (meeting.recurrence !== 'weekly') return meetingDate.toDateString() === dateObj.toDateString();
+            const meetingDay = new Date(meetingDate.getFullYear(), meetingDate.getMonth(), meetingDate.getDate());
+            const calendarDay = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+            const daysSinceStart = Math.round((calendarDay - meetingDay) / 86400000);
+            return daysSinceStart >= 0 && daysSinceStart % 7 === 0;
+        }
+
+        function renderCalendar() {
+            const grid = document.getElementById('calendarGrid');
+            const label = document.getElementById('calendarMonthLabel');
+            if (!grid) return;
+            const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
+                'October', 'November', 'December'
+            ];
+            label.textContent = `${monthNames[calendarMonth]} ${calendarYear}`;
+
+            const firstDay = new Date(calendarYear, calendarMonth, 1).getDay();
+            const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+            const daysInPrevMonth = new Date(calendarYear, calendarMonth, 0).getDate();
+            const today = new Date();
+            const todayStr = today.toDateString();
+
+            let html = '';
+            const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            dayNames.forEach(d => {
+                html += `<div class="text-center text-xs font-semibold text-gray-400 py-1">${d}</div>`;
+            });
+
+            const startOffset = firstDay;
+            for (let i = startOffset - 1; i >= 0; i--) {
+                const day = daysInPrevMonth - i;
+                const dateObj = new Date(calendarYear, calendarMonth - 1, day);
+                const dateStr = dateObj.toDateString();
+                html +=
+                    `<div class="day-cell other-month" data-date="${dateStr}"><div class="day-number">${day}</div><div class="day-dots"></div></div>`;
+            }
+
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dateObj = new Date(calendarYear, calendarMonth, d);
+                const dateStr = dateObj.toDateString();
+                const isToday = dateStr === todayStr;
+                const dayTasks = tasks.filter(t => t.due_date && new Date(t.due_date).toDateString() === dateStr);
+                const dayMeetings = meetings.filter(m => meetingOccursOnDate(m, dateObj));
+                let dotsHtml = '';
+                if (dayTasks.length > 0) dotsHtml +=
+                    `<span class="dot bg-indigo-500" title="${dayTasks.length} task(s)"></span>`;
+                if (dayMeetings.length > 0) dotsHtml +=
+                    `<span class="dot bg-blue-500" title="${dayMeetings.length} meeting(s)"></span>`;
+                html +=
+                    `<div class="day-cell ${isToday ? 'today' : ''}" data-date="${dateStr}" onclick="selectCalendarDay('${dateStr}')">
+                                <div class="day-number">${d}</div>
+                                <div class="day-dots">${dotsHtml}</div>
+                            </div>`;
+            }
+
+            const totalCells = startOffset + daysInMonth;
+            const remaining = 42 - totalCells;
+            for (let d = 1; d <= remaining; d++) {
+                const dateObj = new Date(calendarYear, calendarMonth + 1, d);
+                const dateStr = dateObj.toDateString();
+                html +=
+                    `<div class="day-cell other-month" data-date="${dateStr}"><div class="day-number">${d}</div><div class="day-dots"></div></div>`;
+            }
+
+            grid.innerHTML = html;
+            selectCalendarDay(todayStr);
+        }
+
+        function selectCalendarDay(dateStr) {
+            const container = document.getElementById('calendarDayEvents');
+            if (!container) return;
+            const date = new Date(dateStr);
+            const dayTasks = tasks.filter(t => t.due_date && new Date(t.due_date).toDateString() === dateStr);
+            const dayMeetings = meetings.filter(m => meetingOccursOnDate(m, date));
+
+            if (dayTasks.length === 0 && dayMeetings.length === 0) {
+                container.innerHTML =
+                    `<div class="text-gray-400 text-sm">No events on ${date.toLocaleDateString()}</div>`;
+                return;
+            }
+
+            let html = '';
+            dayTasks.forEach(t => {
+                html +=
+                    `<div class="flex items-center gap-2 p-2 bg-indigo-50 rounded-lg text-sm"><i class="fas fa-tasks text-indigo-500"></i> ${escHtml(t.title)} ${t.time ? `🕐 ${t.time}` : ''} <span class="text-xs text-gray-400">task</span></div>`;
+            });
+            dayMeetings.forEach(m => {
+                const time = m.meeting_date ? new Date(m.meeting_date).toLocaleTimeString() : '';
+                html +=
+                    `<div class="flex items-center gap-2 p-2 bg-blue-50 rounded-lg text-sm"><i class="fas fa-video text-blue-500"></i> ${escHtml(m.title)} ${time ? `at ${time}` : ''} <span class="text-xs text-gray-400">meeting</span></div>`;
+            });
+            container.innerHTML = html;
+        }
+
+        window.changeCalendarMonth = function (delta) {
+            if (delta === 0) {
+                const now = new Date();
+                calendarMonth = now.getMonth();
+                calendarYear = now.getFullYear();
+            } else {
+                calendarMonth += delta;
+                if (calendarMonth > 11) {
+                    calendarMonth = 0;
+                    calendarYear++;
+                }
+                if (calendarMonth < 0) {
+                    calendarMonth = 11;
+                    calendarYear--;
+                }
+            }
+            renderCalendar();
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 16. DAILY PLANNER
+        // ──────────────────────────────────────────────────────────────
+        function renderPlanner() {
+            const container = document.getElementById('plannerTimeline');
+            const label = document.getElementById('plannerDayLabel');
+            if (!container) return;
+
+            const dateStr = plannerDate.toDateString();
+            label.textContent = plannerDate.toDateString() === new Date().toDateString() ? 'Today' : plannerDate
+                .toLocaleDateString();
+
+            const dayTasks = tasks.filter(t => t.due_date && new Date(t.due_date).toDateString() === dateStr);
+            const dayMeetings = meetings.filter(m => m.meeting_date && new Date(m.meeting_date).toDateString() === dateStr);
+
+            let html = '';
+            for (let hour = 7; hour <= 20; hour++) {
+                const timeLabel = hour <= 12 ? `${hour}:00 AM` : hour === 12 ? `12:00 PM` : `${hour - 12}:00 PM`;
+                const timeStr = String(hour).padStart(2, '0') + ':00';
+
+                const tasksAtHour = dayTasks.filter(t => t.time && t.time.startsWith(String(hour).padStart(2, '0')));
+                const meetingsAtHour = dayMeetings.filter(m => {
+                    if (!m.meeting_date) return false;
+                    const mHour = new Date(m.meeting_date).getHours();
+                    return mHour === hour;
+                });
+
+                let content = '';
+                tasksAtHour.forEach(t => {
+                    content +=
+                        `<span class="task-item" onclick="editTask('${t.id}')"><i class="fas fa-check-circle mr-1"></i>${escHtml(t.title)}</span>`;
+                });
+                meetingsAtHour.forEach(m => {
+                    content +=
+                        `<span class="meeting-item" onclick="editMeeting('${m.id}')"><i class="fas fa-video mr-1"></i>${escHtml(m.title)}</span>`;
+                });
+
+                const addBtn =
+                    `<button class="add-btn" onclick="addTaskAtTime('${timeStr}')" title="Add task at ${timeLabel}"><i class="fas fa-plus"></i> Add</button>`;
+                if (!content) { content = addBtn; } else { content += ` ${addBtn}`; }
+
+                html += `
+                            <div class="planner-time-slot" onclick="addTaskAtTime('${timeStr}')">
+                                <div class="time-label">${timeLabel}</div>
+                                <div class="slot-content">${content}</div>
+                            </div>
+                        `;
+            }
+            container.innerHTML = html;
+        }
+
+        window.addTaskAtTime = function (time) {
+            const today = new Date().toISOString().split('T')[0];
+            navigateTo('tasks');
+            setTimeout(() => {
+                openTaskModal(null, time);
+                if (!document.getElementById('taskDueDate').value) {
+                    document.getElementById('taskDueDate').value = today;
+                }
+            }, 100);
+        };
+
+        window.changePlannerDay = function (delta) {
+            if (delta === 0) { plannerDate = new Date(); } else { plannerDate.setDate(plannerDate.getDate() + delta); }
+            renderPlanner();
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 17. TIME TRACKING
+        // ──────────────────────────────────────────────────────────────
+        async function populateTimerSelect() {
+            const sel = document.getElementById('timerTaskSelect');
+            if (!sel) return;
+            const currentVal = sel.value;
+            sel.innerHTML = '<option value="">Select a task...</option>';
+            tasks.forEach(t => {
+                const opt = document.createElement('option');
+                opt.value = t.id;
+                opt.textContent = t.title;
+                sel.appendChild(opt);
+            });
+            if (currentVal) sel.value = currentVal;
+        }
+
+        function updateTimerDisplays() {
+            let seconds = 0;
+            if (timerRunning && timerStartTime) {
+                seconds = Math.floor((Date.now() - timerStartTime) / 1000);
+            } else if (timerPaused) {
+                seconds = Math.floor((pausedElapsed || 0) / 1000);
+            }
+            const formatted = formatTime(seconds);
+            const mainDisplay = document.getElementById('timerDisplay');
+            if (mainDisplay) mainDisplay.textContent = formatted;
+            const dashDisplay = document.getElementById('dashTimerDisplay');
+            if (dashDisplay) dashDisplay.textContent = formatted;
+            const pauseBtn = document.getElementById('pauseTimerBtn');
+            if (pauseBtn) pauseBtn.disabled = !timerRunning;
+        }
+
+        function updateDashboardTimerWidget() {
+            const widget = document.getElementById('dashboardTimerWidget');
+            if (!widget) return;
+            if ((timerRunning || timerPaused) && selectedTaskId) {
+                widget.style.display = 'flex';
+                const task = tasks.find(t => t.id === selectedTaskId);
+                const taskLabel = document.getElementById('dashTimerTask');
+                if (taskLabel) taskLabel.textContent = task ? task.title : 'Unknown';
+            } else { widget.style.display = 'none'; }
+        }
+
+        function resumeTimerFromStorage() {
+            const stored = localStorage.getItem('timerState');
+            if (!stored) return;
+            try {
+                const state = JSON.parse(stored);
+                if (state.running && state.startTime && state.taskId) {
+                    selectedTaskId = state.taskId;
+                    timerStartTime = state.startTime;
+                    timerRunning = true;
+                    timerPaused = false;
+                    pausedElapsed = 0;
+                    const task = tasks.find(t => t.id === selectedTaskId);
+                    const taskLabel = document.getElementById('timerTaskLabel');
+                    if (taskLabel) taskLabel.textContent = task ? task.title : 'Unknown Task';
+                    const mainDisplay = document.getElementById('timerDisplay');
+                    if (mainDisplay) mainDisplay.classList.add('timer-active');
+                    if (timerInterval) clearInterval(timerInterval);
+                    timerInterval = setInterval(() => { updateTimerDisplays(); }, 1000);
+                    updateTimerDisplays();
+                    updateDashboardTimerWidget();
+                    showToast('⏱️ Timer resumed', 'info');
+                } else if (state.paused && state.elapsed && state.taskId) {
+                    selectedTaskId = state.taskId;
+                    timerPaused = true;
+                    pausedElapsed = state.elapsed;
+                    timerRunning = false;
+                    timerStartTime = null;
+                    const task = tasks.find(t => t.id === selectedTaskId);
+                    const taskLabel = document.getElementById('timerTaskLabel');
+                    if (taskLabel) taskLabel.textContent = task ? task.title : 'Unknown Task';
+                    updateTimerDisplays();
+                    updateDashboardTimerWidget();
+                    showToast('⏱️ Paused timer restored', 'info');
+                }
+            } catch (_) { }
+        }
+
+        window.startTimer = function () {
+            const taskId = document.getElementById('timerTaskSelect').value;
+            if (!taskId) {
+                Swal.fire({ icon: 'warning', title: 'No Task', text: 'Please select a task first.' });
+                return;
+            }
+            if (timerRunning) { showToast('Timer already running', 'info'); return; }
+            if (timerPaused && selectedTaskId === taskId) { return resumeTimer(); }
+
+            selectedTaskId = taskId;
+            timerRunning = true;
+            timerPaused = false;
+            pausedElapsed = 0;
+            timerStartTime = Date.now();
+            localStorage.setItem('timerState', JSON.stringify({
+                running: true,
+                startTime: timerStartTime,
+                taskId: selectedTaskId
+            }));
+            persistTimerState('task', { running: true, startTime: timerStartTime, taskId: selectedTaskId });
+
+            const task = tasks.find(t => t.id === taskId);
+            const taskLabel = document.getElementById('timerTaskLabel');
+            if (taskLabel) taskLabel.textContent = task ? task.title : 'Unknown';
+            const mainDisplay = document.getElementById('timerDisplay');
+            if (mainDisplay) mainDisplay.classList.add('timer-active');
+
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => { updateTimerDisplays(); }, 1000);
+            updateTimerDisplays();
+            updateDashboardTimerWidget();
+            showToast('Timer started!', 'success');
+        };
+
+        window.stopTimer = function () {
+            if (!timerRunning && !timerPaused) { showToast('Timer is not running', 'info'); return; }
+            timerRunning = false;
+            timerPaused = false;
+            pausedElapsed = 0;
+            clearInterval(timerInterval);
+            timerInterval = null;
+            const mainDisplay = document.getElementById('timerDisplay');
+            if (mainDisplay) mainDisplay.classList.remove('timer-active');
+            const taskLabel = document.getElementById('timerTaskLabel');
+            if (taskLabel) taskLabel.textContent = 'No task selected';
+            localStorage.removeItem('timerState');
+            persistTimerState('task', { running: false });
+            updateDashboardTimerWidget();
+            if (mainDisplay) mainDisplay.textContent = '00:00:00';
+            const dashDisplay = document.getElementById('dashTimerDisplay');
+            if (dashDisplay) dashDisplay.textContent = '00:00:00';
+            showToast('Timer stopped', 'info');
+        };
+
+        window.logTime = async function () {
+            if (!selectedTaskId) {
+                await Swal.fire({ icon: 'warning', title: 'No Task', text: 'Select a task and start the timer.' });
+                return;
+            }
+            let seconds = 0;
+            if (timerRunning && timerStartTime) {
+                seconds = Math.floor((Date.now() - timerStartTime) / 1000);
+            } else if (timerPaused && pausedElapsed) {
+                seconds = Math.floor((pausedElapsed || 0) / 1000);
+            } else {
+                await Swal.fire({ icon: 'warning', title: 'Timer Not Running', text: 'Start the timer first to log time.' });
+                return;
+            }
+            if (seconds < 1) {
+                await Swal.fire({ icon: 'warning', title: 'No Time', text: 'Timer has not run long enough.' });
+                return;
+            }
+            const hours = seconds / 3600;
+            const payload = {
+                task_id: selectedTaskId,
+                user_id: currentUser.id,
+                hours: parseFloat(hours.toFixed(2)),
+                description: `Logged ${formatTime(seconds)}`,
+                created_at: new Date().toISOString()
+            };
+            try {
+                const { error } = await supabaseClient.from('time_entries').insert([payload]);
+                if (error) throw error;
+                showToast(`Logged ${formatTime(seconds)}`, 'success');
+                stopTimer();
+                selectedTaskId = null;
+                const taskLabel = document.getElementById('timerTaskLabel');
+                if (taskLabel) taskLabel.textContent = 'No task selected';
+                const taskSelect = document.getElementById('timerTaskSelect');
+                if (taskSelect) taskSelect.value = '';
+                await loadTimeEntries();
+                renderTimeEntries();
+                updateDashboard();
+                populateReportAssigneeFilter();
+                updateInsights();
+            } catch (_) {
+                await Swal.fire({ icon: 'error', title: 'Log Failed', text: 'Could not log time.' });
+            }
+        };
+
+        function formatTime(sec) {
+            const h = String(Math.floor(sec / 3600)).padStart(2, '0');
+            const m = String(Math.floor((sec % 3600) / 60)).padStart(2, '0');
+            const s = String(sec % 60).padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        }
+
+        function renderTimeEntries() {
+            const container = document.getElementById('timeEntriesList');
+            if (timeEntries.length === 0) {
+                container.innerHTML =
+                    `<div class="text-center py-6 text-gray-300 text-sm">No time entries yet</div>`;
+                document.getElementById('totalLoggedHours').textContent = 'Total: 0h';
+                return;
+            }
+            let total = 0;
+            container.innerHTML = timeEntries.slice(0, 20).map(e => {
+                total += e.hours || 0;
+                return `
+                            <div class="flex items-center justify-between py-2 border-b border-gray-100 text-sm">
+                                <div class="flex-1 min-w-0"><span class="font-medium text-gray-700">${escHtml(e.tasks?.title || 'Unknown')}</span><span class="text-xs text-gray-400 ml-2">${e.description || ''}</span></div>
+                                <span class="font-mono text-gray-600">${(e.hours || 0).toFixed(1)}h</span>
+                                <span class="text-[10px] text-gray-400 ml-2">${new Date(e.created_at).toLocaleDateString()}</span>
+                            </div>
+                        `;
+            }).join('');
+            document.getElementById('totalLoggedHours').textContent = `Total: ${total.toFixed(1)}h`;
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 18. WORK TIMER
+        // ──────────────────────────────────────────────────────────────
+
+        // NEW: Edit the work timer start time while running or paused
+        window.editWorkTimerStart = function () {
+            // Only allow editing when running or paused
+            if (!workTimerRunning && !workTimerPaused) {
+                showToast('Timer is not running or paused. Start the timer first.', 'info');
+                return;
+            }
+
+            // Determine the current start time
+            let startTimeMs;
+            if (workTimerRunning) {
+                startTimeMs = workTimerStartTime;
+            } else {
+                // When paused, we need the actual start time, not the pause time.
+                // We stored the start time in workTimerStartTime, so use that.
+                startTimeMs = workTimerStartTime;
+            }
+
+            if (!startTimeMs) {
+                showToast('No start time recorded. Please restart the timer.', 'error');
+                return;
+            }
+
+            const startDate = new Date(startTimeMs);
+            // Format as HH:MM in local time
+            const hours = String(startDate.getHours()).padStart(2, '0');
+            const minutes = String(startDate.getMinutes()).padStart(2, '0');
+            const localTimeStr = `${hours}:${minutes}`;
+
+            // Get the current date as YYYY-MM-DD for the datetime input
+            const now = new Date();
+            const currentDateStr = now.toISOString().split('T')[0];
+
+            // Build the datetime-local value (date + 'T' + time)
+            const dateStr = startDate.toISOString().split('T')[0];
+            const dateTimeValue = `${dateStr}T${localTimeStr}`;
+
+            // Show the dialog
+            Swal.fire({
+                title: '✏️ Edit Start Time',
+                html: `
+                    <div style="text-align:left;">
+                        <label style="display:block;font-size:13px;color:#6b7280;margin-bottom:6px;">
+                            Set the exact date & time you started working (your local time):
+                        </label>
+                        <input id="editStartDateTime" type="datetime-local" value="${dateTimeValue}" 
+                               class="swal2-input" style="font-size:16px;padding:12px;width:100%;">
+                        <p style="font-size:12px;color:#9ca3af;margin-top:8px;">
+                            🕐 Current local time: ${new Date().toLocaleString()}
+                        </p>
+                        <p style="font-size:12px;color:#9ca3af;margin-top:4px;">
+                            ⏰ Your timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}
+                        </p>
+                        <p style="font-size:12px;color:#9ca3af;margin-top:4px;">
+                            ${workTimerRunning ? '⏱️ Timer is currently RUNNING' : '⏸️ Timer is currently PAUSED'}
+                        </p>
+                    </div>
+                `,
+                showCancelButton: true,
+                confirmButtonText: 'Update Start Time',
+                cancelButtonText: 'Cancel',
+                preConfirm: () => {
+                    const val = document.getElementById('editStartDateTime').value;
+                    if (!val) {
+                        Swal.showValidationMessage('Please select a date and time.');
+                        return;
+                    }
+                    const d = new Date(val);
+                    if (isNaN(d.getTime())) {
+                        Swal.showValidationMessage('Invalid date/time.');
+                        return;
+                    }
+                    return d.getTime();
+                }
+            }).then(result => {
+                if (result.isConfirmed && result.value) {
+                    const newStartTime = result.value;
+
+                    // Calculate the current elapsed time (in milliseconds)
+                    let currentElapsedMs;
+                    if (workTimerRunning) {
+                        currentElapsedMs = Date.now() - workTimerStartTime;
+                    } else {
+                        // Paused: use the stored elapsed time
+                        currentElapsedMs = workPausedElapsed;
+                    }
+
+                    // Subtract lunch break (in milliseconds)
+                    const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
+                    const effectiveElapsed = Math.max(0, currentElapsedMs - lunchMs);
+
+                    // Set the new start time
+                    workTimerStartTime = newStartTime;
+
+                    // Recalculate the elapsed time based on the new start time
+                    let newElapsedMs;
+                    if (workTimerRunning) {
+                        newElapsedMs = Date.now() - newStartTime;
+                    } else {
+                        // When paused, we keep the same elapsed time (it's frozen)
+                        // But we need to make sure the elapsed time is consistent with the new start time
+                        // The elapsed time at pause is fixed, but we can adjust it if the user changes the start time.
+                        // Actually, when paused, the elapsed time is fixed at workPausedElapsed.
+                        // We should keep it unchanged, because the user is just correcting the start time.
+                        // But if the user changes the start time, the elapsed time should change too.
+                        // Let's recalculate: new elapsed = old elapsed (unchanged)
+                        // But we also need to ensure the start time is set correctly.
+                        // Since we're paused, the elapsed time is fixed. We'll keep workPausedElapsed as-is.
+                        // However, the start time now points to a different moment, so the total duration
+                        // from start to pause would be different. But since we're paused, we just keep the
+                        // elapsed time as-is. This is the simplest behavior.
+                        // If the user wants to adjust the elapsed time, they can resume, edit, and pause again.
+                        // So for paused state, we just update the start time and keep the elapsed time unchanged.
+                        // No change to workPausedElapsed.
+                        newElapsedMs = workPausedElapsed;
+                    }
+
+                    // Apply the lunch break back
+                    const newElapsedWithLunch = newElapsedMs + lunchMs;
+
+                    // Update the paused elapsed if paused
+                    if (workTimerPaused) {
+                        workPausedElapsed = newElapsedWithLunch;
+                    }
+
+                    // Save the state
+                    const state = {
+                        running: workTimerRunning,
+                        startTime: workTimerStartTime,
+                        lunchMinutes: workTimerLunchMinutes || 0
+                    };
+                    if (workTimerPaused) {
+                        state.paused = true;
+                        state.elapsed = workPausedElapsed;
+                    }
+                    localStorage.setItem('workTimerState', JSON.stringify(state));
+                    persistTimerState('work', state);
+
+                    // Update the display
+                    updateWorkTimerDisplays();
+                    showToast('Start time updated successfully!', 'success');
+                }
+            });
+        };
+
+        function updateWorkTimerDisplays() {
+            let seconds = 0;
+
+            if (workTimerRunning && workTimerStartTime) {
+                const elapsedMs = Date.now() - workTimerStartTime;
+                const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
+                seconds = Math.max(0, Math.floor((elapsedMs - lunchMs) / 1000));
+            } else if (workTimerPaused) {
+                const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
+                seconds = Math.max(0, Math.floor((workPausedElapsed - lunchMs) / 1000));
+            }
+
+            if (workTimerRunning && seconds >= MAX_WORK_SECONDS && !workTimerAutoLogging) {
+                workTimerAutoLogging = true;
+                logWorkDay(true);
+            }
+
+            const formatted = formatTime(seconds);
+            const workDisplay = document.getElementById('workTimerDisplay');
+            const workDisplayLarge = document.getElementById('workTimerDisplayLarge');
+            if (workDisplay) workDisplay.textContent = formatted;
+            if (workDisplayLarge) workDisplayLarge.textContent = formatted;
+
+            const statusEl = document.getElementById('workTimerStatus');
+            const statusLarge = document.getElementById('workTimerStatusLarge');
+            if (statusEl) {
+                statusEl.textContent = workTimerRunning ? 'Running' : workTimerPaused ? 'Paused' : 'Stopped';
+                statusEl.style.color = workTimerRunning ? '#16a34a' : workTimerPaused ? '#f59e0b' : '#6b7280';
+            }
+            if (statusLarge) {
+                statusLarge.textContent = workTimerRunning ? 'Running' : workTimerPaused ? 'Paused' : 'Stopped';
+                statusLarge.style.color = workTimerRunning ? '#16a34a' : workTimerPaused ? '#f59e0b' : '#6b7280';
+            }
+
+            const lunchInfo = document.getElementById('workTimerLunchInfo');
+            if (lunchInfo) {
+                lunchInfo.textContent = workTimerLunchMinutes > 0 ? `🍽️ ${workTimerLunchMinutes} min lunch deducted` : '';
+            }
+
+            const startInfo = document.getElementById('workTimerStartInfo');
+            if (startInfo) {
+                if (workTimerRunning && workTimerStartTime) {
+                    const startDate = new Date(workTimerStartTime);
+                    startInfo.textContent = `Started at ${startDate.toLocaleString()}`;
+                } else if (workTimerPaused && workTimerStartTime) {
+                    const startDate = new Date(workTimerStartTime);
+                    startInfo.textContent = `Paused · started at ${startDate.toLocaleString()}`;
+                } else {
+                    startInfo.textContent = 'Not started';
+                }
+            }
+
+            // Enable/disable Edit Start button based on running or paused state
+            const editBtn = document.getElementById('workEditStartBtn');
+            const editBtnLarge = document.getElementById('workEditStartBtnLarge');
+            const isEditable = workTimerRunning || workTimerPaused;
+            if (editBtn) editBtn.disabled = !isEditable;
+            if (editBtnLarge) editBtnLarge.disabled = !isEditable;
+
+            const detail = document.getElementById('workTimerDetailLarge');
+            if (detail) {
+                if (workTimerRunning && workTimerStartTime) {
+                    detail.textContent = `Running since ${new Date(workTimerStartTime).toLocaleString()}`;
+                } else if (workTimerPaused && workTimerStartTime) {
+                    detail.textContent = `Paused — started ${new Date(workTimerStartTime).toLocaleString()}`;
+                } else {
+                    detail.textContent = 'Not started';
+                }
+            }
+
+            // Get all button references
+            const startBtn = document.getElementById('workStartBtn');
+            const startBtnLarge = document.getElementById('workStartBtnLarge');
+            const stopBtn = document.getElementById('workStopBtn');
+            const stopBtnLarge = document.getElementById('workStopBtnLarge');
+            const pauseBtn = document.getElementById('workPauseBtn');
+            const pauseBtnLarge = document.getElementById('workPauseBtnLarge');
+            const lunchBtn = document.getElementById('workLunchBtn');
+            const lunchBtnLarge = document.getElementById('workLunchBtnLarge');
+            const logBtn = document.getElementById('workLogBtn');
+            const logBtnLarge = document.getElementById('workLogBtnLarge');
+
+            // Disable/enable buttons based on state
+            if (startBtn) startBtn.disabled = workTimerRunning || workTimerPaused;
+            if (startBtnLarge) startBtnLarge.disabled = workTimerRunning || workTimerPaused;
+            if (stopBtn) stopBtn.disabled = !workTimerRunning && !workTimerPaused;
+            if (stopBtnLarge) stopBtnLarge.disabled = !workTimerRunning && !workTimerPaused;
+            if (lunchBtn) lunchBtn.disabled = !workTimerRunning;
+            if (lunchBtnLarge) lunchBtnLarge.disabled = !workTimerRunning;
+            const logDisabled = !workTimerRunning && !workTimerPaused && workTimerLunchMinutes === 0;
+            if (logBtn) logBtn.disabled = logDisabled;
+            if (logBtnLarge) logBtnLarge.disabled = logDisabled;
+
+            // Handle pause/resume button text and click handler
+            if (pauseBtn) {
+                if (workTimerPaused) {
+                    pauseBtn.innerHTML = '<i class="fas fa-play"></i> Resume';
+                    pauseBtn.onclick = resumeWorkTimer;
+                    pauseBtn.disabled = false;
+                } else if (workTimerRunning) {
+                    pauseBtn.innerHTML = '<i class="fas fa-pause"></i> Pause';
+                    pauseBtn.onclick = pauseWorkTimer;
+                    pauseBtn.disabled = false;
+                } else {
+                    pauseBtn.innerHTML = '<i class="fas fa-pause"></i> Pause';
+                    pauseBtn.onclick = pauseWorkTimer;
+                    pauseBtn.disabled = true;
+                }
+            }
+            if (pauseBtnLarge) {
+                if (workTimerPaused) {
+                    pauseBtnLarge.innerHTML = '<i class="fas fa-play"></i> Resume';
+                    pauseBtnLarge.onclick = resumeWorkTimer;
+                    pauseBtnLarge.disabled = false;
+                } else if (workTimerRunning) {
+                    pauseBtnLarge.innerHTML = '<i class="fas fa-pause"></i> Pause';
+                    pauseBtnLarge.onclick = pauseWorkTimer;
+                    pauseBtnLarge.disabled = false;
+                } else {
+                    pauseBtnLarge.innerHTML = '<i class="fas fa-pause"></i> Pause';
+                    pauseBtnLarge.onclick = pauseWorkTimer;
+                    pauseBtnLarge.disabled = true;
+                }
+            }
+
+            // Expected finish time
+            if (workTimerStartTime) {
+                const workEndTime = workTimerStartTime + 9 * 60 * 60 * 1000;
+                const formattedEndTime = new Date(workEndTime).toLocaleTimeString('en-GB', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+                const finishDisplay = document.getElementById('exptectedFinish');
+                if (finishDisplay) finishDisplay.textContent = formattedEndTime;
+
+                const remainingMs = workEndTime - Date.now();
+                const timeUntilFinish = document.getElementById('timeUntilFinish');
+                if (timeUntilFinish) {
+                    if (remainingMs > 0) {
+                        const remainingSeconds = Math.floor(remainingMs / 1000);
+                        const hours = Math.floor(remainingSeconds / 3600);
+                        const minutes = Math.floor((remainingSeconds % 3600) / 60);
+                        const secs = remainingSeconds % 60;
+                        timeUntilFinish.textContent =
+                            `(${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')} left)`;
+                    } else {
+                        timeUntilFinish.textContent = '(Finished)';
+                    }
+                }
+            } else {
+                const finishDisplay = document.getElementById('exptectedFinish');
+                if (finishDisplay) finishDisplay.textContent = '--:--:--';
+                const timeUntilFinish = document.getElementById('timeUntilFinish');
+                if (timeUntilFinish) timeUntilFinish.textContent = '';
+            }
+        }
+        function resumeWorkTimerFromStorage() {
+            const stored = localStorage.getItem('workTimerState');
+            if (!stored) return;
+            try {
+                const state = JSON.parse(stored)
+                if (state.running && state.startTime) {
+                    workTimerRunning = true;
+                    workTimerStartTime = state.startTime;
+                    workTimerLunchMinutes = state.lunchMinutes || 0;
+                    workTimerPaused = false;
+                    workPausedElapsed = 0;
+                    if (workTimerInterval) clearInterval(workTimerInterval);
+                    workTimerInterval = setInterval(() => { updateWorkTimerDisplays(); }, 1000);
+                    updateWorkTimerDisplays();
+                    console.log('⏱️ Work Timer resumed', 'info');
+                } else if (state.paused && state.elapsed) {
+                    workTimerPaused = true;
+                    workPausedElapsed = state.elapsed;
+                    workTimerRunning = false;
+                    workTimerStartTime = state.startTime || Date.now() - workPausedElapsed;
+                    updateWorkTimerDisplays();
+                    console.log('⏱️ Paused work timer restored', 'info');
+                }
+            } catch (_) { }
+        }
+
+        window.startWorkTimer = function () {
+            if (workTimerRunning) { showToast('Work timer already running', 'info'); return; }
+            if (workTimerPaused) { return resumeWorkTimer(); }
+            workTimerRunning = true;
+            workTimerAutoLogging = false;
+            workTimerStartTime = Date.now();
+            workTimerPaused = false;
+            workPausedElapsed = 0;
+            localStorage.setItem('workTimerState', JSON.stringify({
+                running: true,
+                startTime: workTimerStartTime,
+                lunchMinutes: workTimerLunchMinutes || 0
+            }));
+            persistTimerState('work', {
+                running: true,
+                startTime: workTimerStartTime,
+                lunchMinutes: workTimerLunchMinutes ||
+                    0
+            });
+            if (workTimerInterval) clearInterval(workTimerInterval);
+            workTimerInterval = setInterval(() => { updateWorkTimerDisplays(); }, 1000);
+            updateWorkTimerDisplays();
+            showToast('Work Timer started!', 'success');
+        };
+
+        window.pauseWorkTimer = function () {
+            if (!workTimerRunning) { showToast('Work timer is not running', 'info'); return; }
+            workPausedElapsed = Date.now() - workTimerStartTime;
+            workTimerPaused = true;
+            workTimerRunning = false;
+            clearInterval(workTimerInterval);
+            workTimerInterval = null;
+            localStorage.setItem('workTimerState', JSON.stringify({
+                paused: true,
+                elapsed: workPausedElapsed,
+                startTime: workTimerStartTime,
+                lunchMinutes: workTimerLunchMinutes || 0
+            }));
+            persistTimerState('work', {
+                paused: true,
+                elapsed: workPausedElapsed,
+                startTime: workTimerStartTime,
+                lunchMinutes: workTimerLunchMinutes ||
+                    0
+            });
+            updateWorkTimerDisplays();
+            showToast('Work timer paused', 'info');
+        };
+
+        window.resumeWorkTimer = function () {
+            if (!workTimerPaused) { showToast('Work timer is not paused', 'info'); return; }
+            workTimerStartTime = Date.now() - (workPausedElapsed || 0);
+            workTimerRunning = true;
+            workTimerPaused = false;
+            localStorage.setItem('workTimerState', JSON.stringify({
+                running: true,
+                startTime: workTimerStartTime,
+                lunchMinutes: workTimerLunchMinutes || 0
+            }));
+            persistTimerState('work', {
+                running: true,
+                startTime: workTimerStartTime,
+                lunchMinutes: workTimerLunchMinutes ||
+                    0
+            });
+            if (workTimerInterval) clearInterval(workTimerInterval);
+            workTimerInterval = setInterval(() => { updateWorkTimerDisplays(); }, 1000);
+            updateWorkTimerDisplays();
+            showToast('Work timer resumed', 'success');
+        };
+
+
+        window.stopWorkTimer = async function () {
+            if (!workTimerRunning && !workTimerPaused) { showToast('Work timer is not running', 'info'); return; }
+            await logWorkDay(false);
+        };
+
+        window.pauseTimer = function () {
+            if (!timerRunning) { showToast('Timer is not running', 'info'); return; }
+            pausedElapsed = Date.now() - timerStartTime;
+            timerPaused = true;
+            timerRunning = false;
+            clearInterval(timerInterval);
+            timerInterval = null;
+            localStorage.setItem('timerState', JSON.stringify({
+                paused: true,
+                elapsed: pausedElapsed,
+                taskId: selectedTaskId
+            }));
+            persistTimerState('task', { paused: true, elapsed: pausedElapsed, taskId: selectedTaskId });
+            updateTimerDisplays();
+            updateDashboardTimerWidget();
+            showToast('Timer paused', 'info');
+        };
+
+        window.resumeTimer = function () {
+            if (!timerPaused) { showToast('Timer is not paused', 'info'); return; }
+            timerStartTime = Date.now() - (pausedElapsed || 0);
+            timerRunning = true;
+            timerPaused = false;
+            localStorage.setItem('timerState', JSON.stringify({
+                running: true,
+                startTime: timerStartTime,
+                taskId: selectedTaskId
+            }));
+            persistTimerState('task', { running: true, startTime: timerStartTime, taskId: selectedTaskId });
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => { updateTimerDisplays(); }, 1000);
+            updateTimerDisplays();
+            updateDashboardTimerWidget();
+            showToast('Timer resumed', 'success');
+        };
+
+        window.takeLunchBreak = function () {
+            if (!workTimerRunning) {
+                Swal.fire({ icon: 'warning', title: 'Timer Not Running', text: 'Start the work timer first.' });
+                return;
+            }
+            workTimerLunchMinutes += 30;
+            localStorage.setItem('workTimerState', JSON.stringify({
+                running: workTimerRunning,
+                startTime: workTimerStartTime,
+                lunchMinutes: workTimerLunchMinutes
+            }));
+            persistTimerState('work', {
+                running: workTimerRunning,
+                startTime: workTimerStartTime,
+                lunchMinutes: workTimerLunchMinutes
+            });
+            updateWorkTimerDisplays();
+            showToast('🍽️ Lunch break added (30 min deducted)', 'success');
+        };
+
+        window.logWorkDay = async function (automatic = false) {
+            if (!workTimerRunning && !workTimerPaused && workTimerLunchMinutes === 0) {
+                await Swal.fire({
+                    icon: 'warning',
+                    title: 'No Time',
+                    text: 'Start the work timer or take a lunch break first.'
+                });
+                return;
+            }
+            let seconds = 0;
+            if (workTimerRunning && workTimerStartTime) {
+                const elapsedMs = Date.now() - workTimerStartTime;
+                const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
+                seconds = Math.max(0, Math.floor((elapsedMs - lunchMs) / 1000));
+            } else if (workTimerPaused) {
+                const lunchMs = (workTimerLunchMinutes || 0) * 60 * 1000;
+                seconds = Math.max(0, Math.floor((workPausedElapsed - lunchMs) / 1000));
+            } else {
+                await Swal.fire({
+                    icon: 'warning',
+                    title: 'Timer Not Running',
+                    text: 'Start the work timer to log time.'
+                });
+                return;
+            }
+            seconds = Math.min(seconds, MAX_WORK_SECONDS);
+            if (seconds < 60) {
+                await Swal.fire({ icon: 'warning', title: 'Too Short', text: 'Work at least 1 minute to log.' });
+                return;
+            }
+            const hours = seconds / 3600;
+            let workTask = tasks.find(t => t.title === 'Work Day');
+            if (!workTask) {
+                const newTask = {
+                    title: 'Work Day',
+                    description: 'General work hours logged',
+                    status: 'done',
+                    assignee: profileSettings.display_name || currentUser.email,
+                    time_estimate: 8.0,
+                    user_id: currentUser.id,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                };
+                const { data, error } = await supabaseClient.from('tasks').insert([newTask]).select();
+                if (error) {
+                    await Swal.fire({ icon: 'error', title: 'Error', text: 'Could not create work task.' });
+                    return;
+                }
+                workTask = data[0];
+                await loadTasks();
+                renderTasks();
+                populateTimerSelect();
+                populateReportAssigneeFilter();
+            }
+            const payload = {
+                task_id: workTask.id,
+                user_id: currentUser.id,
+                hours: parseFloat(hours.toFixed(2)),
+                description: `Work day (60 min lunch)`,
+                created_at: new Date().toISOString()
+            };
+            try {
+                const { error } = await supabaseClient.from('time_entries').insert([payload]);
+                if (error) throw error;
+
+                // Try to record journal entry, but don't fail the whole log if it fails
+                try {
+                    await recordAutomaticJournal(hours, workTask.title);
+                } catch (journalError) {
+                    console.warn('Journal entry failed:', journalError);
+                    showToast('Time logged, but journal entry could not be saved.', 'info');
+                }
+
+                showToast(automatic ? '8-hour workday logged automatically' : `Logged ${hours.toFixed(1)} hours for today`, 'success');
+                // Reset timer state
+                workTimerRunning = false;
+                workTimerPaused = false;
+                workTimerAutoLogging = false;
+                clearInterval(workTimerInterval);
+                workTimerInterval = null;
+                workTimerLunchMinutes = 0;
+                workTimerStartTime = null;
+                localStorage.removeItem('workTimerState');
+                persistTimerState('work', { running: false });
+                updateWorkTimerDisplays();
+                await loadTimeEntries();
+                renderTimeEntries();
+                updateDashboard();
+                updateInsights();
+            } catch (error) {
+                console.error('Log work day error:', error);
+                await Swal.fire({ icon: 'error', title: 'Log Failed', text: 'Could not log work day.' });
+            }
+        };
+        // ──────────────────────────────────────────────────────────────
+        // 19. DASHBOARD
+        // ──────────────────────────────────────────────────────────────
+        function updateDashboard() {
+            document.getElementById('statTasks').textContent = tasks.length;
+            document.getElementById('statDone').textContent = tasks.filter(t => t.status === 'done').length;
+            document.getElementById('statNotes').textContent = notes.length;
+            document.getElementById('statMeetings').textContent = meetings.length;
+            const now = new Date();
+            const weekStart = new Date(now);
+            weekStart.setDate(now.getDate() - now.getDay());
+            const weekHours = timeEntries.filter(e => new Date(e.created_at) >= weekStart)
+                .reduce((sum, e) => sum + (e.hours || 0), 0);
+            document.getElementById('statHours').textContent = weekHours.toFixed(1) + 'h';
+            const container = document.getElementById('recentActivity');
+            const recent = [...tasks, ...notes, ...meetings]
+                .sort((a, b) => new Date(b.created_at || b.updated_at) - new Date(a.created_at || a.updated_at))
+                .slice(0, 5);
+            if (recent.length === 0) {
+                container.innerHTML = `<div class="text-center py-6 text-gray-300">No recent activity</div>`;
+            } else {
+                container.innerHTML = recent.map(item => {
+                    const type = item.title ? 'task' : item.link ? 'meeting' : 'note';
+                    const label = item.title || item.link || 'Item';
+                    const time = new Date(item.created_at || item.updated_at).toLocaleString();
+                    return `
+                                <div class="flex items-center gap-2 text-sm py-1.5 border-b border-gray-50">
+                                    <span class="text-xs text-gray-400">${time}</span>
+                                    <span class="text-gray-600">•</span>
+                                    <span class="text-gray-700 truncate">${escHtml(label)}</span>
+                                    <span class="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-black-500">${type}</span>
+                                </div>
+                            `;
+                }).join('');
+            }
+            updateDashboardTimerWidget();
+            updateWorkTimerDisplays();
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 20. PERSONAL WORKSPACE
+        // ──────────────────────────────────────────────────────────────
+        function personalStorageKey() {
+            return `adv_personal_work_${currentUser?.id || 'local'}`;
+        }
+
+        function loadPersonalData() {
+            if (personalData) return personalData;
+            try { personalData = JSON.parse(localStorage.getItem(personalStorageKey()) || 'null'); } catch (_) { personalData = null; }
+            personalData = personalData || { captures: [], content: [], followUps: [], journal: [], templates: [], knowledge: [] };
+            if (!personalData.templates.length) {
+                personalData.templates = [
+                    { id: 'demo', name: 'Customer call', body: 'Context:\nQuestions:\nDecisions:\nFollow-up:' },
+                    { id: 'demo-2', name: 'Technical article', body: 'Problem:\nApproach:\nExample:\nTakeaways:' },
+                    { id: 'demo-3', name: 'Weekly planning', body: 'Wins:\nPriorities:\nRisks:\nNext week:' }
+                ];
+                savePersonalData();
+            }
+            return personalData;
+        }
+
+        function savePersonalData() {
+            localStorage.setItem(personalStorageKey(), JSON.stringify(personalData));
+        }
+
+        async function recordAutomaticJournal(hours, activity) {
+            await recordAutomaticJournalSupabase(hours, activity);
+        }
+
+        function todayDate() { return new Date().toISOString().slice(0, 10); }
+
+        /*************  ✨ Windsurf Command ⭐  *************/
+        /**
+         * Renders the 'My Work' page, which includes:
+         * - Today's tasks, meetings, and time entries
+         * - Unfinished tasks sorted by priority and due date
+         * - Time logged this week
+         * - Follow-ups to revisit
+         * - Personal content planning
+         * - Captured ideas
+         * - Follow-ups
+         * - Activity breakdown for the last 30 days
+         * - Upcoming meetings
+         * - Overdue tasks
+         * - Personal templates for content creation
+         * - Knowledge base of useful documentation, tools, and references
+         */
+        /*******  21960f94-d17e-4a3c-8965-38e968593fe9  *******/
+        function renderMyWork() {
+            const data = getPersonalCache();
+            const now = new Date();
+            const today = todayDate();
+            const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay());
+            const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 7);
+            const todayTasks = tasks.filter(task => task.due_date === today);
+            const todayMeetings = meetings.filter(meeting => meeting.meeting_date && new Date(meeting.meeting_date).toDateString() === now.toDateString());
+            const todayEntries = timeEntries.filter(entry => entry.created_at && entry.created_at.slice(0, 10) === today);
+            const unfinished = tasks.filter(task => task.status !== 'done');
+            const priorities = { high: 0, urgent: 0, medium: 1, low: 2 };
+            const queue = unfinished.slice().sort((a, b) => (priorities[a.priority] ?? 1) - (priorities[b.priority] ?? 1) || (a.due_date || '9999').localeCompare(b.due_date || '9999')).slice(0, 8);
+            const weekHours = timeEntries.filter(entry => new Date(entry.created_at) >= weekStart && new Date(entry.created_at) < weekEnd).reduce((sum, entry) => sum + Number(entry.hours || 0), 0);
+            const monthEntries = timeEntries.filter(entry => new Date(entry.created_at) >= new Date(now.getTime() - 30 * 86400000));
+            const hoursByActivity = {};
+            monthEntries.forEach(entry => { const label = entry.tasks?.title || entry.description || 'General work'; hoursByActivity[label] = (hoursByActivity[label] || 0) + Number(entry.hours || 0); });
+            const topActivities = Object.entries(hoursByActivity).sort((a, b) => b[1] - a[1]).slice(0, 5);
+            const overdue = unfinished.filter(task => task.due_date && task.due_date < today);
+            const upcoming = meetings.filter(meeting => meeting.meeting_date && new Date(meeting.meeting_date) >= now && new Date(meeting.meeting_date) <= new Date(now.getTime() + 7 * 86400000));
+
+            document.getElementById('myWorkDateLabel').textContent = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+            document.getElementById('myWorkStats').innerHTML = [
+                ['Today tasks', todayTasks.length, 'fa-check-square', 'indigo'],
+                ['Meetings', todayMeetings.length, 'fa-video', 'blue'],
+                ['Hours this week', weekHours.toFixed(1), 'fa-clock', 'emerald'],
+                ['Open queue', unfinished.length, 'fa-layer-group', 'orange'],
+                ['Follow-ups', data.followUps.filter(item => !item.done).length, 'fa-reply', 'rose']
+            ].map(stat => `<div class="bg-white rounded-xl p-4 border border-gray-100 shadow-sm"><div class="text-xs text-gray-400">${stat[0]}</div><div class="flex items-center justify-between mt-2"><strong class="text-xl text-gray-800">${stat[1]}</strong><i class="fas ${stat[2]} text-${stat[3]}-500"></i></div></div>`).join('');
+            document.getElementById('todayHoursLabel').textContent = `${todayEntries.reduce((sum, entry) => sum + Number(entry.hours || 0), 0).toFixed(1)}h logged today`;
+            document.getElementById('todayWorkList').innerHTML = [...todayTasks.map(task => `<div class="flex items-center gap-3 p-2 rounded-lg bg-indigo-50/70"><i class="fas fa-check-square text-indigo-500"></i><span class="flex-1 text-sm">${escHtml(task.title)}</span><span class="text-xs text-gray-500">task</span></div>`), ...todayMeetings.map(meeting => `<div class="flex items-center gap-3 p-2 rounded-lg bg-blue-50/70"><i class="fas fa-video text-blue-500"></i><span class="flex-1 text-sm">${escHtml(meeting.title)}</span><button onclick="prepareMeeting('${meeting.id}')" class="text-xs text-blue-600 hover:underline">Prepare</button></div>`)].join('') || '<div class="text-sm text-gray-400 py-3">Nothing scheduled today. Capture an idea or choose a priority.</div>';
+            document.getElementById('myWorkQueue').innerHTML = queue.map(task => `<div class="flex items-start gap-3 p-2 border-b border-gray-100"><i class="fas fa-grip-lines text-gray-300 mt-1"></i><div class="flex-1 min-w-0"><div class="text-sm font-medium text-gray-800 truncate">${escHtml(task.title)}</div><div class="text-xs text-gray-400 mt-1">${escHtml(task.description || 'No next action')} ${task.due_date ? `· due ${task.due_date}` : ''}</div></div><span class="text-[10px] uppercase text-${task.priority === 'high' || task.priority === 'urgent' ? 'rose' : 'gray'}-500">${escHtml(task.priority || 'next')}</span></div>`).join('') || '<div class="text-sm text-gray-400 py-3">Your queue is clear.</div>';
+            document.getElementById('contentPlannerList').innerHTML = data.content.slice().reverse().map(item => `<div class="flex items-center gap-2 p-2 border-b border-gray-100"><i class="fas fa-${item.type === 'video' ? 'video' : item.type === 'talk' ? 'microphone' : 'pen-nib'} text-orange-500"></i><div class="flex-1"><div class="text-sm font-medium">${escHtml(item.title)}</div><div class="text-xs text-gray-400">${escHtml(item.type)} · ${escHtml(item.status)}${item.date ? ` · ${item.date}` : ''}</div></div></div>`).join('') || '<div class="text-sm text-gray-400 py-3">Plan your next article, tutorial, talk, video, or social post.</div>';
+            document.getElementById('captureList').innerHTML = data.captures.slice(-5).reverse().map(item => `<div class="text-xs p-2 rounded bg-gray-50"><span class="font-semibold text-emerald-600">${escHtml(item.type)}</span> ${escHtml(item.text)}</div>`).join('');
+            document.getElementById('followUpList').innerHTML = data.followUps.slice().reverse().map(item => `<div class="flex gap-2 items-start"><button onclick="completeFollowUp('${item.id}')" ...`)
+            document.getElementById('journalHistory').innerHTML = data.journal.slice(-3).reverse().map(item => `<div class="border-t border-gray-100 pt-2"><div class="text-xs text-gray-400">${item.date}</div><div class="text-sm text-gray-600 whitespace-pre-line">${escHtml(item.text)}</div></div>`).join('');
+            document.getElementById('personalAnalytics').innerHTML = topActivities.map(([label, hours]) => `<div><div class="flex justify-between text-xs mb-1"><span>${escHtml(label)}</span><span>${hours.toFixed(1)}h</span></div><div class="h-2 bg-gray-100 rounded"><div class="h-2 bg-cyan-500 rounded" style="width:${Math.min(100, hours / Math.max(1, weekHours) * 100)}%"></div></div></div>`).join('') || '<div class="text-sm text-gray-400">Log time to see your activity breakdown.</div>';
+            document.getElementById('weeklyReviewLabel').textContent = `${weekStart.toLocaleDateString()} - ${new Date(weekEnd - 1).toLocaleDateString()}`;
+            document.getElementById('weeklyReview').innerHTML = `<div class="text-sm"><i class="fas fa-exclamation-circle text-rose-500 mr-2"></i>${overdue.length} overdue task${overdue.length === 1 ? '' : 's'}</div><div class="text-sm"><i class="fas fa-calendar text-blue-500 mr-2"></i>${upcoming.length} upcoming meeting${upcoming.length === 1 ? '' : 's'}</div><div class="text-sm"><i class="fas fa-list-check text-indigo-500 mr-2"></i>${unfinished.length} unfinished task${unfinished.length === 1 ? '' : 's'}</div><div class="text-sm"><i class="fas fa-flag text-orange-500 mr-2"></i>${data.followUps.filter(item => !item.done).length} follow-up${data.followUps.filter(item => !item.done).length === 1 ? '' : 's'} to revisit</div>`;
+            document.getElementById('personalTemplates').innerHTML = data.templates.map(item => `<button onclick="usePersonalTemplate('${item.id}')" ...`)
+            document.getElementById('knowledgeBase').innerHTML = data.knowledge.slice().reverse().map(item => `<a href="${escHtml(item.url)}" target="_blank" class="flex items-center gap-2 p-2 rounded hover:bg-sky-50"><i class="fas fa-link text-sky-500"></i><span class="text-sm truncate">${escHtml(item.title)}</span></a>`).join('') || '<div class="text-sm text-gray-400">Save useful documentation, tools, and references here.</div>';
+        }
+
+        window.openQuickCapture = function () { document.getElementById('captureText')?.focus(); };
+
+        window.prepareMeeting = function (id) { const meeting = meetings.find(item => item.id === id); if (!meeting) return; navigateTo('notes'); window.openInlineEditor(); document.getElementById('noteTitle').value = `${meeting.title} - preparation`; document.getElementById('notePaper').innerHTML = `<h3>Agenda</h3><ul><li>Objective</li><li>Questions</li><li>Decisions</li><li>Follow-up actions</li></ul>`; };
+        window.toggleMyWorkFocus = function () { document.body.classList.toggle('mywork-focus'); };
+
+        // ──────────────────────────────────────────────────────────────
+        // 21. INSIGHTS
+        // ──────────────────────────────────────────────────────────────
+        function updateInsights() {
+            const now = new Date();
+            const thirtyDaysAgo = new Date(now);
+            thirtyDaysAgo.setDate(now.getDate() - 30);
+
+            const recentTasks = tasks.filter(t => new Date(t.created_at) >= thirtyDaysAgo);
+            const completedTasks = recentTasks.filter(t => t.status === 'done');
+            const completionRate = recentTasks.length > 0 ? Math.round((completedTasks.length / recentTasks.length) * 100) :
+                0;
+
+            const recentTimeEntries = timeEntries.filter(e => new Date(e.created_at) >= thirtyDaysAgo);
+            const totalHours = recentTimeEntries.reduce((sum, e) => sum + (e.hours || 0), 0);
+
+            document.getElementById('insightTaskCompletion').textContent = completionRate + '%';
+            document.getElementById('insightHoursLogged').textContent = totalHours.toFixed(1) + 'h';
+            document.getElementById('insightTasksCreated').textContent = recentTasks.length;
+
+            const trendCtx = document.getElementById('insightChart')?.getContext('2d');
+            if (trendCtx) {
+                if (insightChartInstance) insightChartInstance.destroy();
+                const days = [];
+                const counts = [];
+                const completed = [];
+                for (let i = 6; i >= 0; i--) {
+                    const d = new Date(now);
+                    d.setDate(now.getDate() - i);
+                    const dateStr = d.toDateString();
+                    days.push(d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
+                    const dayTasks = tasks.filter(t => new Date(t.created_at).toDateString() === dateStr);
+                    const dayCompleted = tasks.filter(t => t.status === 'done' && new Date(t.updated_at).toDateString() ===
+                        dateStr);
+                    counts.push(dayTasks.length);
+                    completed.push(dayCompleted.length);
+                }
+                insightChartInstance = new Chart(trendCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: days,
+                        datasets: [
+                            { label: 'Created', data: counts, backgroundColor: '#818cf8', borderRadius: 4 },
+                            {
+                                label: 'Completed',
+                                data: completed,
+                                backgroundColor: '#34d399',
+                                borderRadius: 4
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                                labels: {
+                                    boxWidth: 12,
+                                    padding: 12,
+                                    font: { size: 11 }
+                                }
+                            }
+                        },
+                        scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+                    }
+                });
+            }
+
+            const timeCtx = document.getElementById('insightTimeChart')?.getContext('2d');
+            if (timeCtx) {
+                if (insightTimeChartInstance) insightTimeChartInstance.destroy();
+                const statusCounts = {
+                    todo: tasks.filter(t => t.status === 'todo').length,
+                    'in-progress': tasks.filter(t => t.status === 'in-progress').length,
+                    'in-review': tasks.filter(t => t.status === 'in-review').length,
+                    done: tasks.filter(t => t.status === 'done').length
+                };
+                insightTimeChartInstance = new Chart(timeCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['To Do', 'In Progress', 'In Review', 'Done'],
+                        datasets: [{
+                            data: [statusCounts.todo, statusCounts['in-progress'], statusCounts[
+                                'in-review'], statusCounts.done],
+                            backgroundColor: ['#f59e0b',
+                                '#3b82f6', '#a855f7', '#10b981'
+                            ],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: {
+                                    boxWidth: 12,
+                                    padding: 12,
+                                    font: { size: 11 }
+                                }
+                            }
+                        },
+                        cutout: '70%'
+                    }
+                });
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 21. REPORTS
+        // ──────────────────────────────────────────────────────────────
+        function populateReportAssigneeFilter() {
+            const sel = document.getElementById('reportAssigneeFilter');
+            if (!sel) return;
+            const currentVal = sel.value;
+            const assignees = new Set();
+            tasks.forEach(t => { if (t.assignee) assignees.add(t.assignee); });
+            sel.innerHTML = '<option value="">All</option>';
+            [...assignees].sort().forEach(a => {
+                const opt = document.createElement('option');
+                opt.value = a;
+                opt.textContent = a;
+                sel.appendChild(opt);
+            });
+            if (currentVal) sel.value = currentVal;
+        }
+
+        function getFilteredTasks() {
+            const from = document.getElementById('reportFrom').value;
+            const to = document.getElementById('reportTo').value;
+            const assigneeFilter = document.getElementById('reportAssigneeFilter').value;
+            const spentMin = parseFloat(document.getElementById('reportSpentMin').value) || 0;
+            const spentMax = parseFloat(document.getElementById('reportSpentMax').value) || Infinity;
+            const estMin = parseFloat(document.getElementById('reportEstMin').value) || 0;
+            const estMax = parseFloat(document.getElementById('reportEstMax').value) || Infinity;
+
+            let filtered = tasks.filter(t => {
+                const d = new Date(t.created_at);
+                const fromD = new Date(from);
+                const toD = new Date(to);
+                toD.setHours(23, 59, 59);
+                return d >= fromD && d <= toD;
+            });
+
+            if (assigneeFilter) { filtered = filtered.filter(t => t.assignee === assigneeFilter); }
+
+            const spentMap = {};
+            timeEntries.forEach(e => {
+                const d = new Date(e.created_at);
+                const fromD = new Date(from);
+                const toD = new Date(to);
+                toD.setHours(23, 59, 59);
+                if (d >= fromD && d <= toD) { spentMap[e.task_id] = (spentMap[e.task_id] || 0) + (e.hours || 0); }
+            });
+
+            filtered = filtered.filter(t => {
+                const spent = spentMap[t.id] || 0;
+                return spent >= spentMin && spent <= spentMax;
+            });
+
+            filtered = filtered.filter(t => {
+                const est = t.time_estimate || 0;
+                return est >= estMin && est <= estMax;
+            });
+
+            return { filtered, spentMap };
+        }
+
+        async function updateReport() {
+            const from = document.getElementById('reportFrom').value;
+            const to = document.getElementById('reportTo').value;
+            if (!from || !to) return;
+
+            const { filtered, spentMap } = getFilteredTasks();
+
+            const totalTasks = filtered.length;
+            const completed = filtered.filter(t => t.status === 'done').length;
+            let totalSpent = 0;
+            let totalEst = 0;
+            filtered.forEach(t => {
+                totalSpent += spentMap[t.id] || 0;
+                totalEst += t.time_estimate || 0;
+            });
+            const avgSpent = totalTasks > 0 ? totalSpent / totalTasks : 0;
+            const avgEst = totalTasks > 0 ? totalEst / totalTasks : 0;
+
+            document.getElementById('rTotalTasks').textContent = totalTasks;
+            document.getElementById('rCompleted').textContent = completed;
+            document.getElementById('rTotalHours').textContent = totalSpent.toFixed(1) + 'h';
+            document.getElementById('rTotalEst').textContent = totalEst.toFixed(1) + 'h';
+            document.getElementById('rAvgHours').textContent = avgSpent.toFixed(1) + 'h';
+            document.getElementById('rAvgEst').textContent = avgEst.toFixed(1) + 'h';
+
+            const tbody = document.getElementById('reportTableBody');
+            if (filtered.length === 0) {
+                tbody.innerHTML =
+                    `<tr><td colspan="6" class="text-center py-4 text-gray-300">No data in this period</td></tr>`;
+            } else {
+                tbody.innerHTML = filtered.slice(0, 100).map(t => {
+                    const spent = spentMap[t.id] || 0;
+                    const est = t.time_estimate || 0;
+                    let varianceDisplay = '—';
+                    if (est > 0 && spent > 0) {
+                        const pct = ((spent - est) / est * 100);
+                        varianceDisplay = (pct > 0 ? '+' : '') + pct.toFixed(0) + '%';
+                    } else if (est > 0 && spent === 0) { varianceDisplay = '-100%'; } else if (est === 0 && spent >
+                        0) { varianceDisplay = '+∞'; } else { varianceDisplay = '—'; }
+                    const varColor = est > 0 && spent > est ? 'text-red-500' :
+                        est > 0 && spent < est ? 'text-emerald-500' :
+                            est === 0 && spent > 0 ? 'text-amber-500' :
+                                'text-gray-400';
+                    const statusMap = {
+                        'todo': 'To Do',
+                        'in-progress': 'In Progress',
+                        'in-review': 'In Review',
+                        'done': 'Done'
+                    };
+                    return `
+                                <tr class="border-b border-gray-50 hover:bg-gray-50/50">
+                                    <td class="py-2 pr-4 font-medium text-gray-700">${escHtml(t.title)}</td>
+                                    <td class="py-2 pr-4">${escHtml(t.assignee || '—')}</td>
+                                    <td class="py-2 pr-4"><span class="text-xs px-2 py-0.5 rounded-full status-${t.status}">${statusMap[t.status] || t.status}</span></td>
+                                    <td class="py-2 pr-4 font-mono text-gray-600">${est.toFixed(1)}h</td>
+                                    <td class="py-2 pr-4 font-mono text-gray-600">${spent.toFixed(1)}h</td>
+                                    <td class="py-2 pr-4 font-mono ${varColor}">${varianceDisplay}</td>
+                                </tr>
+                            `;
+                }).join('');
+            }
+
+            const ctx = document.getElementById('reportChart').getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+            try {
+                const statusCounts = {
+                    todo: filtered.filter(t => t.status === 'todo').length,
+                    'in-progress': filtered.filter(t => t.status === 'in-progress').length,
+                    'in-review': filtered.filter(t => t.status === 'in-review').length,
+                    done: filtered.filter(t => t.status === 'done').length
+                };
+                chartInstance = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['To Do', 'In Progress', 'In Review', 'Done'],
+                        datasets: [{
+                            data: [statusCounts.todo, statusCounts['in-progress'], statusCounts[
+                                'in-review'], statusCounts.done],
+                            backgroundColor: ['#f59e0b',
+                                '#3b82f6', '#a855f7', '#10b981'
+                            ],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: {
+                                    boxWidth: 12,
+                                    padding: 12,
+                                    font: { size: 11 }
+                                }
+                            }
+                        },
+                        cutout: '70%'
+                    }
+                });
+            } catch (_) { }
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 22. REPORT EXPORT
+        // ──────────────────────────────────────────────────────────────
+        window.generateReport = async function (format) {
+            const from = document.getElementById('reportFrom').value;
+            const to = document.getElementById('reportTo').value;
+            if (!from || !to) {
+                await Swal.fire({ icon: 'warning', title: 'Date Range', text: 'Please select a date range first.' });
+                return;
+            }
+            try {
+                if (format === 'pdf') {
+                    const content = document.getElementById('reportContent');
+                    const canvas = await html2canvas(content, { scale: 2, backgroundColor: '#fff' });
+                    const imgData = canvas.toDataURL('image/png');
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF('p', 'mm', 'a4');
+                    const pdfWidth = pdf.internal.pageSize.getWidth();
+                    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+                    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+                    pdf.save(`Report_${from}_to_${to}.pdf`);
+                    showToast('PDF downloaded!', 'success');
+                } else if (format === 'csv') {
+                    const { filtered, spentMap } = getFilteredTasks();
+                    let csv = 'Task,Assignee,Status,Estimated (h),Spent (h),Variance\n';
+                    filtered.forEach(t => {
+                        const spent = spentMap[t.id] || 0;
+                        const est = t.time_estimate || 0;
+                        let varianceDisplay = '—';
+                        if (est > 0 && spent > 0) {
+                            const pct = ((spent - est) / est * 100);
+                            varianceDisplay = (pct > 0 ? '+' : '') + pct.toFixed(0) + '%';
+                        } else if (est > 0 && spent === 0) { varianceDisplay = '-100%'; } else if (est === 0 &&
+                            spent > 0) { varianceDisplay = '+∞'; }
+                        csv +=
+                            `"${t.title}","${t.assignee || ''}","${t.status}",${est.toFixed(1)},${spent.toFixed(1)},${varianceDisplay}\n`;
+                    });
+                    const blob = new Blob([csv], { type: 'text/csv' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `Report_${from}_to_${to}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    showToast('CSV downloaded!', 'success');
+                }
+            } catch (_) {
+                await Swal.fire({ icon: 'error', title: 'Export Failed', text: 'Could not generate report.' });
+            }
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 23. FILES
+        // ──────────────────────────────────────────────────────────────
+        async function loadFiles() {
+            if (currentUser) {
+                try {
+                    const { data, error } = await supabaseClient.from('files').select('*').eq('user_id', currentUser.id)
+                        .order('uploaded_at', { ascending: false });
+                    if (error) throw error;
+                    files = await Promise.all((data || []).map(async file => {
+                        if (!file.path) return file;
+                        const { data: signed } = await supabaseClient.storage.from('files').createSignedUrl(
+                            file.path, 86400);
+                        return { ...file, url: signed?.signedUrl || file.url };
+                    }));
+                    saveFilesToStorage();
+                    renderFiles();
+                    renderFolderTree();
+                    populateStudioFolders();
+                    loadStudioFiles();
+                    return;
+                } catch (error) { console.warn('Could not load files from Supabase', error); }
+            }
+            loadFilesFromStorage();
+        }
+
+        function loadFilesFromStorage() {
+            try {
+                const data = localStorage.getItem('devhub_files');
+                if (data) { files = JSON.parse(data); } else { files = []; }
+            } catch (_) { files = []; }
+            renderFiles();
+            renderFolderTree();
+            populateStudioFolders();
+            loadStudioFiles();
+        }
+
+        function saveFilesToStorage() {
+            try { localStorage.setItem('devhub_files', JSON.stringify(files)); } catch (_) {
+                showToast('Failed to save files to storage', 'error');
+            }
+        }
+
+        window.uploadFiles = async function (event) {
+            const fileList = event.target.files;
+            if (!fileList || fileList.length === 0) return;
+
+            for (let i = 0; i < fileList.length; i++) {
+                const file = fileList[i];
+                let handled = false;
+                if (typeof supabaseClient !== 'undefined' && currentUser) {
+                    try {
+                        const safeName = file.name.replace(/\s+/g, '_');
+                        const folderSegment = currentFolder && currentFolder !== 'root' ? currentFolder : 'root';
+                        const path = `${currentUser.id}/${folderSegment}/${Date.now()}_${i}_${safeName}`;
+                        const up = await supabaseClient.storage.from('files').upload(path, file, {
+                            cacheControl: '3600',
+                            upsert: false
+                        });
+                        if (up?.error) throw up.error;
+                        let publicUrl = null;
+                        try {
+                            const { data: signed } = await supabaseClient.storage.from('files').createSignedUrl(path,
+                                86400);
+                            publicUrl = signed?.signedUrl || null;
+                        } catch (_) { }
+                        try {
+                            const meta = {
+                                name: file.name,
+                                path: path,
+                                url: publicUrl,
+                                type: file.type || 'application/octet-stream',
+                                size: file.size,
+                                folder: currentFolder || 'root',
+                                uploaded_at: new Date().toISOString(),
+                                user_id: currentUser.id
+                            };
+                            const { data: inserted, error: insertErr } = await supabaseClient.from('files').insert([
+                                meta
+                            ]).select().maybeSingle();
+                            if (insertErr || !inserted) throw (insertErr || new Error(
+                                'File metadata was not saved'));
+                            const fileData = {
+                                id: inserted?.id || (meta.path || ('file_' + Date.now())),
+                                name: meta.name,
+                                type: meta.type,
+                                size: meta.size,
+                                path: meta.path,
+                                url: meta.url,
+                                folder: meta.folder,
+                                uploaded_at: meta.uploaded_at,
+                                user_id: meta.user_id,
+                                stored: 'supabase'
+                            };
+                            files.unshift(fileData);
+                            saveFilesToStorage();
+                            renderFiles();
+                            renderFolderTree();
+                            showToast(`Uploaded to Supabase: ${file.name}`, 'success');
+                            handled = true;
+                        } catch (error) { throw error; }
+                    } catch (error) {
+                        console.warn('Supabase upload failed', error);
+                        showToast(`Supabase upload failed: ${error.message || 'check storage policies'}`, 'error');
+                    }
+                }
+                if (!handled) {
+                    try {
+                        const reader = new FileReader();
+                        await new Promise((res, rej) => {
+                            reader.onload = function (e) {
+                                const fileData = {
+                                    id: Date.now() + '_' + i + '_' + Math.random().toString(36).substr(2,
+                                        6),
+                                    name: file.name,
+                                    type: file.type || 'application/octet-stream',
+                                    size: file.size,
+                                    data: e.target.result,
+                                    folder: currentFolder || 'root',
+                                    uploaded_at: new Date().toISOString(),
+                                    user_id: currentUser?.id || 'local',
+                                    stored: 'local'
+                                };
+                                files.unshift(fileData);
+                                saveFilesToStorage();
+                                renderFiles();
+                                renderFolderTree();
+                                showToast(`Uploaded: ${file.name}`, 'success');
+                                res();
+                            };
+                            reader.onerror = rej;
+                            reader.readAsDataURL(file);
+                        });
+                    } catch (_) { showToast('Failed to save file', 'error'); }
+                }
+            }
+            event.target.value = '';
+        };
+
+        window.showNewFolderDialog = function () {
+            Swal.fire({
+                title: 'New Folder',
+                input: 'text',
+                inputLabel: 'Folder name',
+                inputPlaceholder: 'My Folder',
+                showCancelButton: true,
+                confirmButtonText: 'Create',
+                cancelButtonText: 'Cancel'
+            }).then(async result => {
+                if (result.isConfirmed && result.value) {
+                    const name = result.value.trim();
+                    if (!name) return;
+                    if (typeof supabaseClient !== 'undefined' && currentUser) {
+                        try {
+                            const meta = {
+                                name: name,
+                                type: 'folder',
+                                created_at: new Date().toISOString(),
+                                user_id: currentUser.id
+                            };
+                            const { data: inserted, error } = await supabaseClient.from('files').insert([meta])
+                                .select().maybeSingle();
+                            if (!error && inserted) {
+                                const folderData = {
+                                    id: inserted.id || ('folder_' + Date.now()),
+                                    name: inserted.name,
+                                    type: 'folder',
+                                    created_at: inserted.created_at,
+                                    user_id: inserted.user_id
+                                };
+                                files.unshift(folderData);
+                                saveFilesToStorage();
+                                renderFiles();
+                                renderFolderTree();
+                                showToast(`Folder "${name}" created`, 'success');
+                                return;
+                            }
+                        } catch (_) { }
+                    }
+                    const folderData = {
+                        id: 'folder_' + Date.now(),
+                        name: name,
+                        type: 'folder',
+                        created_at: new Date().toISOString(),
+                        user_id: currentUser?.id || 'local'
+                    };
+                    files.unshift(folderData);
+                    saveFilesToStorage();
+                    renderFiles();
+                    renderFolderTree();
+                    showToast(`Folder "${name}" created`, 'success');
+                }
+            });
+        };
+
+        function renderFolderTree() {
+            const container = document.getElementById('folderTree');
+            if (!container) return;
+            const folders = files.filter(f => f.type === 'folder');
+            if (folders.length === 0) {
+                container.innerHTML =
+                    `<div class="text-xs text-gray-400">No folders yet. Create one above.</div>`;
+                return;
+            }
+            container.innerHTML = folders.map(f => `
+                            <div class="folder-item ${currentFolder === f.id ? 'active' : ''}" onclick="selectFolder('${f.id}')">
+                                <i class="fas fa-folder mr-2 ${currentFolder === f.id ? 'text-indigo-600' : 'text-amber-400'}"></i>
+                                ${escHtml(f.name)}
+                            </div>
+                        `).join('');
+        }
+
+        window.selectFolder = function (folderId) {
+            currentFolder = folderId;
+            renderFolderTree();
+            renderFiles();
+        };
+
+        window.setFileFilter = function (filter) {
+            currentFileFilter = filter;
+            currentFolder = null;
+            renderFolderTree();
+            renderFiles();
+        };
+
+        function renderFiles() {
+            const container = document.getElementById('filesList');
+            const searchTerm = document.getElementById('fileSearch')?.value?.toLowerCase() || '';
+            if (!container) return;
+
+            let filtered = files.filter(f => f.type !== 'folder');
+            if (currentFolder) {
+                const selectedFolder = files.find(file => file.type === 'folder' && String(file.id) === String(currentFolder));
+                const selectedFolderName = selectedFolder?.name || currentFolder;
+                filtered = filtered.filter(file => file.folder === selectedFolderName || file.folder === currentFolder);
+            }
+            if (searchTerm) { filtered = filtered.filter(f => f.name.toLowerCase().includes(searchTerm)); }
+
+            if (filtered.length === 0) {
+                container.innerHTML =
+                    `<div class="col-span-full text-center py-10 text-gray-300 text-sm">No files in this location. Upload a file or create a folder.</div>`;
+                return;
+            }
+
+            const fileIcons = {
+                'pdf': 'fa-file-pdf',
+                'image': 'fa-file-image',
+                'text': 'fa-file-lines',
+                'word': 'fa-file-word',
+                'excel': 'fa-file-excel',
+                'powerpoint': 'fa-file-powerpoint',
+                'zip': 'fa-file-zipper',
+                'video': 'fa-file-video',
+                'audio': 'fa-file-audio',
+                'default': 'fa-file'
+            };
+
+            function getFileIcon(mimeType, fileName) {
+                const ext = fileName.split('.').pop()?.toLowerCase() || '';
+                if (mimeType?.startsWith('image/')) return fileIcons.image;
+                if (mimeType?.startsWith('text/')) return fileIcons.text;
+                if (mimeType?.includes('pdf')) return fileIcons.pdf;
+                if (mimeType?.includes('word') || ext === 'docx' || ext === 'doc') return fileIcons.word;
+                if (mimeType?.includes('excel') || ext === 'xlsx' || ext === 'xls') return fileIcons.excel;
+                if (mimeType?.includes('powerpoint') || ext === 'pptx' || ext === 'ppt') return fileIcons.powerpoint;
+                if (ext === 'zip' || ext === 'rar' || ext === '7z') return fileIcons.zip;
+                if (mimeType?.startsWith('video/')) return fileIcons.video;
+                if (mimeType?.startsWith('audio/')) return fileIcons.audio;
+                return fileIcons.default;
+            }
+
+            function formatSize(bytes) {
+                if (bytes < 1024) return bytes + ' B';
+                if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+                if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+                return (bytes / 1073741824).toFixed(1) + ' GB';
+            }
+
+            container.innerHTML = filtered.map(f => `
+                            <div class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 card-hover file-item">
+                                <div class="flex items-start gap-3">
+                                    <div class="file-icon text-${f.type?.startsWith('image/') ? 'indigo' : 'cyan'}-500"><i class="fas ${getFileIcon(f.type, f.name)}"></i></div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="text-sm font-medium text-gray-800 truncate" title="${escHtml(f.name)}">${escHtml(f.name)}</div>
+                                        <div class="text-xs text-gray-400">${formatSize(f.size)} · ${new Date(f.uploaded_at).toLocaleDateString()}</div>
+                                        ${f.folder && f.folder !== 'root' ? `<div class="text-xs text-amber-500">📁 ${escHtml(f.folder)}</div>` : ''}
+                                    </div>
+                                    <div class="flex gap-1 flex-shrink-0">
+                                        <button onclick="previewFile('${f.id}')" class="text-gray-400 hover:text-indigo-600 text-xs p-1.5 rounded hover:bg-gray-100 transition" title="Preview"><i class="fas fa-eye"></i></button>
+                                        <button onclick="downloadFile('${f.id}')" class="text-gray-400 hover:text-blue-600 text-xs p-1.5 rounded hover:bg-gray-100 transition" title="Download"><i class="fas fa-download"></i></button>
+                                        <button onclick="moveFile('${f.id}')" class="text-gray-400 hover:text-amber-600 text-xs p-1.5 rounded hover:bg-gray-100 transition" title="Move"><i class="fas fa-folder-open"></i></button>
+                                        <button onclick="deleteFile('${f.id}')" class="text-gray-400 hover:text-red-500 text-xs p-1.5 rounded hover:bg-gray-100 transition" title="Delete"><i class="fas fa-trash"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('');
+        }
+
+        window.moveFile = function (id) {
+            const file = files.find(f => f.id === id);
+            if (!file) return;
+            const folders = files.filter(f => f.type === 'folder');
+            if (folders.length === 0) { showToast('No folders to move to. Create a folder first.', 'info'); return; }
+            const folderOptions = folders.map(f => `<option value="${f.id}">${escHtml(f.name)}</option>`).join('');
+            Swal.fire({
+                title: 'Move File',
+                html: `<select id="moveFolderSelect" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">${folderOptions}</select>`,
+                showCancelButton: true,
+                confirmButtonText: 'Move',
+                cancelButtonText: 'Cancel',
+                preConfirm: () => { return document.getElementById('moveFolderSelect').value; }
+            }).then(async result => {
+                if (result.isConfirmed && result.value) {
+                    const folderId = result.value;
+                    const folder = files.find(f => f.id === folderId);
+                    if (folder) {
+                        file.folder = folder.name;
+                        saveFilesToStorage();
+                        renderFiles();
+                        renderFolderTree();
+                        showToast(`Moved to "${folder.name}"`, 'success');
+                    }
+                }
+            });
+        };
+
+        window.previewFile = function (id) {
+            const file = files.find(f => f.id === id);
+            console.log(file);
+            if (!file) { showToast('File not found', 'error'); return; }
+            currentFilePreview = file;
+            document.getElementById('filePreviewTitle').textContent = file.name;
+            const content = document.getElementById('filePreviewContent');
+            const isImage = file.type?.startsWith('image/');
+            const isText = file.type?.startsWith('text/') || file.name.endsWith('.txt') || file.name.endsWith('.md') ||
+                file.name.endsWith('.csv') || file.name.endsWith('.json') || file.name.endsWith('.xml') ||
+                file.name.endsWith('.html') || file.name.endsWith('.css') || file.name.endsWith('.js');
+            const isPDF = file.type?.includes('pdf') || file.name.endsWith('.pdf');
+
+            if (isImage) {
+                content.innerHTML = `<img src="${file?.url}" alt="${escHtml(file?.name)}" />`;
+            } else if (isText) {
+                try {
+                    const text = atob(file.data.split(',')[1] || '');
+                    content.innerHTML =
+                        `<pre class="file-text-preview">${escHtml(text.slice(0, 50000))}${text.length > 50000 ? '\n\n... (truncated)' : ''}</pre>`;
+                } catch (_) {
+                    content.innerHTML =
+                        `<div class="text-gray-400 p-4">Could not display text preview. <button onclick="downloadFile('${file.id}')" class="text-indigo-600 underline">Download</button> instead.</div>`;
+                }
+            } else if (isPDF) {
+                content.innerHTML = `<iframe src="${file.url}" type="application/pdf"></iframe>`;
+            } else {
+                const isOffice = file.name.endsWith('.docx') || file.name.endsWith('.doc') ||
+                    file.name.endsWith('.xlsx') || file.name.endsWith('.xls') ||
+                    file.name.endsWith('.pptx') || file.name.endsWith('.ppt');
+                if (isOffice) {
+                    content.innerHTML = `
+                                <div class="text-center py-8 text-gray-500">
+                                    <i class="fas fa-file-alt text-4xl mb-3 block text-amber-400"></i>
+                                    <p>Office documents can be downloaded and opened in your preferred application.</p>
+                                    <button onclick="downloadFile('${file.id}')" class="mt-3 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition"><i class="fas fa-download mr-1"></i> Download</button>
+                                    <button onclick="viewOfficeOnline('${file.id}')" class="mt-3 ml-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition"><i class="fas fa-external-link-alt mr-1"></i> Open in Office Online</button>
+                                </div>
+                            `;
+                } else {
+                    content.innerHTML = `
+                                <div class="text-center py-8 text-gray-500">
+                                    <i class="fas fa-file text-4xl mb-3 block text-gray-300"></i>
+                                    <p>Preview not available for this file type.</p>
+                                    <button onclick="downloadFile('${file.id}')" class="mt-3 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition"><i class="fas fa-download mr-1"></i> Download</button>
+                                </div>
+                            `;
+                }
+            }
+            document.getElementById('filePreviewModal').classList.remove('hidden');
+        };
+
+        window.viewOfficeOnline = function (id) {
+            const file = files.find(f => f.id === id);
+            if (!file) return;
+            try {
+                const url = file.url;
+                const viewerUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
+                window.open(viewerUrl, '_blank');
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+            } catch (_) {
+                showToast('Could not open in Office Online. Please download the file.', 'error');
+                downloadFile(id);
+            }
+        };
+
+        function dataURLToBlob(dataURL) {
+            const parts = dataURL.split(',');
+            const mime = parts[0].match(/:(.*?);/)[1];
+            const byteString = atob(parts[1]);
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let i = 0; i < byteString.length; i++) { ia[i] = byteString.charCodeAt(i); }
+            return new Blob([ab], { type: mime });
+        }
+
+        window.downloadFile = function (id) {
+            const file = files.find(f => f.id === id);
+            if (!file) { showToast('File not found', 'error'); return; }
+            const link = document.createElement('a');
+            (async () => {
+                try {
+                    let href = file.data || file.url || null;
+                    if (!href && file.path && typeof supabaseClient !== 'undefined') {
+                        try {
+                            const { data: signed } = await supabaseClient.storage.from('files').createSignedUrl(
+                                file.path, 86400);
+                            href = signed?.signedUrl || null;
+                        } catch (_) { }
+                    }
+                    if (!href && file.data && file.data.startsWith('data:')) href = file.data;
+                    if (!href) { showToast('Unable to download file', 'error'); return; }
+                    link.href = href;
+                    link.download = file.name || 'download';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    showToast(`Downloading: ${file.name}`, 'success');
+                } catch (_) { showToast('Download failed', 'error'); }
+            })();
+        };
+
+        window.downloadCurrentFile = function () { if (currentFilePreview) { downloadFile(currentFilePreview.id); } };
+
+        window.deleteFile = function (id) {
+            Swal.fire({
+                title: 'Delete File?',
+                text: 'This action cannot be undone.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                cancelButtonColor: '#6b7280',
+                confirmButtonText: 'Yes, delete'
+            }).then(async result => {
+                if (result.isConfirmed) {
+                    const file = files.find(f => f.id === id);
+                    if (file && typeof supabaseClient !== 'undefined' && currentUser) {
+                        try {
+                            if (file.path) {
+                                const { error: remErr } = await supabaseClient.storage.from('files').remove([file
+                                    .path
+                                ]);
+                                if (remErr) console.warn('Supabase storage remove error', remErr);
+                            }
+                            const { error } = await supabaseClient.from('files').delete().eq('id', id).eq('user_id',
+                                currentUser.id);
+                            if (error) throw error;
+                        } catch (_) { }
+                    }
+                    files = files.filter(f => f.id !== id);
+                    saveFilesToStorage();
+                    renderFiles();
+                    renderFolderTree();
+                    showToast('File deleted', 'info');
+                    if (currentFilePreview && currentFilePreview.id === id) {
+                        closeModal('filePreviewModal');
+                        currentFilePreview = null;
+                    }
+                }
+            });
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 24. EMAILS
+        // ──────────────────────────────────────────────────────────────
+        async function loadEmails() {
+            if (currentUser) {
+                try {
+                    const { data, error } = await supabaseClient.from('emails').select('*').eq('user_id', currentUser.id)
+                        .order('sent_at', { ascending: false });
+                    if (error) throw error;
+                    emails = data || [];
+                    saveEmailsToStorage();
+                    renderEmails();
+                    return;
+                } catch (error) { console.warn('Could not load emails from Supabase', error); }
+            }
+            loadEmailsFromStorage();
+        }
+
+        function loadEmailsFromStorage() {
+            try {
+                const data = localStorage.getItem('devhub_emails');
+                if (data) { emails = JSON.parse(data); } else { emails = []; }
+            } catch (_) { emails = []; }
+            renderEmails();
+        }
+
+        function saveEmailsToStorage() {
+            try { localStorage.setItem('devhub_emails', JSON.stringify(emails)); } catch (_) {
+                showToast('Failed to save emails to storage', 'error');
+            }
+        }
+
+        window.openComposeEmail = function (data) {
+            document.getElementById('emailEditId').value = data?.id || '';
+            document.getElementById('emailFrom').value = data?.from_email || currentUser?.email || '';
+            document.getElementById('emailTo').value = data?.to_email || '';
+            document.getElementById('emailSubject').value = data?.subject || '';
+            document.getElementById('emailBody').value = data?.body || '';
+            document.getElementById('emailLabels').value = data?.labels || '';
+            document.getElementById('composeEmailTitle').textContent = data ? 'Edit Email' : 'New Email';
+            document.getElementById('composeEmailModal').classList.remove('hidden');
+        };
+        window.openComposeEmail = openComposeEmail;
+
+        window.saveEmail = async function () {
+            const id = document.getElementById('emailEditId').value;
+            const from_email = document.getElementById('emailFrom').value.trim() || currentUser?.email ||
+                'me@example.com';
+            const to_email = document.getElementById('emailTo').value.trim();
+            const subject = document.getElementById('emailSubject').value.trim();
+            const body = document.getElementById('emailBody').value.trim();
+            const labels = document.getElementById('emailLabels').value.trim();
+
+            if (!to_email || !subject) {
+                Swal.fire({ icon: 'warning', title: 'Missing Fields', text: 'To and Subject are required.' });
+                return;
+            }
+
+            if (!currentUser) return showToast('Please sign in before saving an email', 'error');
+            const now = new Date().toISOString();
+            const payload = { from_email, to_email, subject, body, labels, updated_at: now, user_id: currentUser.id };
+            try {
+                let saved;
+                if (id) {
+                    const { data, error } = await supabaseClient.from('emails').update(payload).eq('id', id).eq(
+                        'user_id', currentUser.id).select().single();
+                    if (error) throw error;
+                    saved = data;
+                } else {
+                    const { data, error } = await supabaseClient.from('emails').insert([{
+                        ...payload,
+                        sent_at: now,
+                        created_at: now,
+                        is_read: false
+                    }]).select().single();
+                    if (error) throw error;
+                    saved = data;
+                }
+                const index = emails.findIndex(email => String(email.id) === String(saved.id));
+                if (index >= 0) emails[index] = saved;
+                else emails.unshift(saved);
+            } catch (error) {
+                console.error('Email save failed', error);
+                showToast(`Email was not saved: ${error.message || 'check Supabase policies'}`, 'error');
+                return;
+            }
+            saveEmailsToStorage();
+            renderEmails();
+            closeModal('composeEmailModal');
+            showToast(id ? 'Email updated!' : 'Email sent!', 'success');
+        };
+
+        function renderEmails() {
+            const searchTerm = document.getElementById('emailSearch')?.value?.toLowerCase() || '';
+            const listContainer = document.getElementById('emailList');
+            const detailContainer = document.getElementById('emailDetail');
+            if (!listContainer) return;
+
+            let filtered = emails;
+            if (searchTerm) {
+                filtered = emails.filter(e => e.subject.toLowerCase().includes(searchTerm) || e.body.toLowerCase()
+                    .includes(searchTerm) || e.from_email.toLowerCase().includes(searchTerm) || e.to_email.toLowerCase()
+                        .includes(searchTerm) || (e.labels || '').toLowerCase().includes(searchTerm));
+            }
+
+            document.getElementById('emailCount').textContent = filtered.length;
+
+            if (filtered.length === 0) {
+                listContainer.innerHTML =
+                    `<div class="p-4 text-center text-gray-400 text-sm">${emails.length === 0 ? 'No emails yet' : 'No matching emails'}</div>`;
+                if (detailContainer) {
+                    detailContainer.innerHTML =
+                        `<div class="text-center text-gray-400 text-sm py-16">Select an email to read</div>`;
+                }
+                return;
+            }
+
+            listContainer.innerHTML = filtered.map(e => {
+                const labels = (e.labels || '').split(',').filter(l => l.trim());
+                const labelHtml = labels.map(l =>
+                    `<span class="tag-badge bg-rose-100 text-rose-700">${escHtml(l.trim())}</span>`).join('');
+                return `
+                            <div class="email-item ${e.is_read ? '' : 'unread'} px-4 py-3 flex items-center justify-between" onclick="viewEmail('${e.id}')">
+                                <div class="flex-1 min-w-0">
+                                    <div class="text-sm truncate ${e.is_read ? 'font-normal text-gray-600' : 'font-semibold text-gray-800'}">${escHtml(e.subject)}</div>
+                                    <div class="text-xs text-gray-400 truncate">${escHtml(e.from_email)} · ${new Date(e.sent_at).toLocaleDateString()}</div>
+                                    ${labelHtml ? `<div class="flex gap-1 mt-1 flex-wrap">${labelHtml}</div>` : ''}
+                                </div>
+                                <div class="flex gap-1 flex-shrink-0 ml-2">
+                                    <button onclick="event.stopPropagation();toggleReadEmail('${e.id}')" class="text-gray-400 hover:text-indigo-600 text-xs p-1 rounded hover:bg-gray-100 transition" title="${e.is_read ? 'Mark unread' : 'Mark read'}"><i class="fas ${e.is_read ? 'fa-envelope-open' : 'fa-envelope'}"></i></button>
+                                    <button onclick="event.stopPropagation();deleteEmail('${e.id}')" class="text-gray-400 hover:text-red-500 text-xs p-1 rounded hover:bg-gray-100 transition" title="Delete"><i class="fas fa-trash"></i></button>
+                                </div>
+                            </div>
+                        `;
+            }).join('');
+
+            if (currentEmailDetailId && emails.find(e => e.id === currentEmailDetailId)) {
+                viewEmail(currentEmailDetailId);
+            } else if (filtered.length > 0 && detailContainer) {
+                viewEmail(filtered[0].id);
+            }
+        }
+
+        window.viewEmail = function (id) {
+            const email = emails.find(e => e.id === id);
+            if (!email) return;
+            currentEmailDetailId = id;
+            if (!email.is_read) {
+                email.is_read = true;
+                saveEmailsToStorage();
+                supabaseClient.from('emails').update({ is_read: true }).eq('id', id).eq('user_id', currentUser?.id)
+                    .then(({ error }) => { if (error) console.warn('Email read status was not saved', error); });
+                renderEmails();
+            }
+
+            const detailContainer = document.getElementById('emailDetail');
+            if (!detailContainer) return;
+            const labels = (email.labels || '').split(',').filter(l => l.trim());
+            const labelHtml = labels.map(l =>
+                `<span class="tag-badge bg-rose-100 text-rose-700">${escHtml(l.trim())}</span>`).join('');
+
+            detailContainer.innerHTML = `
+                            <div class="space-y-3">
+                                <div class="flex items-start justify-between">
+                                    <div>
+                                        <h3 class="text-lg font-semibold text-gray-800">${escHtml(email.subject)}</h3>
+                                        <div class="text-sm text-gray-500 mt-1">From: ${escHtml(email.from_email)}</div>
+                                        <div class="text-sm text-gray-500">To: ${escHtml(email.to_email)}</div>
+                                        <div class="text-xs text-gray-400">${new Date(email.sent_at).toLocaleString()}</div>
+                                        ${labelHtml ? `<div class="flex gap-1 mt-2 flex-wrap">${labelHtml}</div>` : ''}
+                                    </div>
+                                    <div class="flex gap-2">
+                                        <button onclick="replyToEmail()" class="text-gray-400 hover:text-rose-600 text-sm p-1.5 rounded hover:bg-gray-100 transition" title="Reply"><i class="fas fa-reply"></i></button>
+                                        <button onclick="deleteEmail('${email.id}')" class="text-gray-400 hover:text-red-500 text-sm p-1.5 rounded hover:bg-gray-100 transition" title="Delete"><i class="fas fa-trash"></i></button>
+                                    </div>
+                                </div>
+                                <div class="border-t border-gray-200 pt-3 text-sm text-gray-700" style="white-space:pre-wrap;line-height:1.6;">${escHtml(email.body || 'No content')}</div>
+                            </div>
+                        `;
+        };
+
+        window.replyToEmail = function () {
+            const email = emails.find(e => e.id === currentEmailDetailId);
+            if (!email) return;
+            const replySubject = email.subject.startsWith('Re:') ? email.subject : `Re: ${email.subject}`;
+            const replyBody = `\n\n\n--- Original ---\nFrom: ${email.from_email}\nSubject: ${email.subject}\n\n${email.body}`;
+            document.getElementById('emailEditId').value = '';
+            document.getElementById('emailFrom').value = currentUser?.email || '';
+            document.getElementById('emailTo').value = email.from_email;
+            document.getElementById('emailSubject').value = replySubject;
+            document.getElementById('emailBody').value = replyBody;
+            document.getElementById('emailLabels').value = email.labels || '';
+            document.getElementById('composeEmailTitle').textContent = 'Reply to Email';
+            document.getElementById('composeEmailModal').classList.remove('hidden');
+        };
+
+        window.toggleReadEmail = function (id) {
+            const email = emails.find(e => e.id === id);
+            if (!email) return;
+            email.is_read = !email.is_read;
+            saveEmailsToStorage();
+            supabaseClient.from('emails').update({ is_read: email.is_read }).eq('id', id).eq('user_id', currentUser?.id)
+                .then(({ error }) => { if (error) showToast('Could not update email status', 'error'); });
+            renderEmails();
+            if (currentEmailDetailId === id) { viewEmail(id); }
+        };
+
+        window.deleteEmail = function (id) {
+            Swal.fire({
+                title: 'Delete Email?',
+                text: 'This action cannot be undone.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                cancelButtonColor: '#6b7280',
+                confirmButtonText: 'Yes, delete'
+            }).then(async result => {
+                if (result.isConfirmed) {
+                    const { error } = await supabaseClient.from('emails').delete().eq('id', id).eq('user_id',
+                        currentUser?.id);
+                    if (error) { showToast(`Email was not deleted: ${error.message}`, 'error'); return; }
+                    emails = emails.filter(e => e.id !== id);
+                    saveEmailsToStorage();
+                    renderEmails();
+                    if (currentEmailDetailId === id) {
+                        currentEmailDetailId = null;
+                        const detailContainer = document.getElementById('emailDetail');
+                        if (detailContainer) {
+                            detailContainer.innerHTML =
+                                `<div class="text-center text-gray-400 text-sm py-16">Select an email to read</div>`;
+                        }
+                    }
+                    showToast('Email deleted', 'info');
+                }
+            });
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 25. TOOL INTEGRATIONS
+        // ──────────────────────────────────────────────────────────────
+        window.connectTool = async function (name) {
+            const providers = {
+                Slack: 'slack',
+                Teams: 'teams',
+                GitHub: 'github',
+                Jira: 'jira',
+                'Google Calendar': 'google_calendar',
+                'Outlook Calendar': 'outlook'
+            };
+            const provider = providers[name];
+            if (!provider) { showToast(`${name} needs an OAuth connector before it can sync.`, 'info'); return; }
+            const { value, isConfirmed } = await Swal.fire({
+                title: `Connect ${name}`,
+                text: 'Paste the incoming webhook URL or leave it blank to save a connection placeholder. OAuth tokens must be handled by a secure server.',
+                input: 'url',
+                inputPlaceholder: 'https://…',
+                showCancelButton: true
+            });
+            if (!isConfirmed) return;
+            const { error } = await supabaseClient.from('integration_connections').upsert({
+                owner_id: currentUser.id,
+                provider,
+                webhook_url: value || null,
+                is_enabled: !!value
+            }, { onConflict: 'owner_id,provider' });
+            if (error) return showToast(`Connection was not saved: ${error.message}`, 'error');
+            showToast(`${name} connection saved`, 'success');
+        };
+
+        window.addCustomTool = function () {
+            const name = document.getElementById('customToolName').value.trim();
+            const key = document.getElementById('customToolKey').value.trim();
+            if (!name || !key) {
+                Swal.fire({ icon: 'warning', title: 'Missing Fields', text: 'Please fill in both fields.' });
+                return;
+            }
+            showToast(`🔌 Added custom integration: ${name}`, 'success');
+            document.getElementById('customToolName').value = '';
+            document.getElementById('customToolKey').value = '';
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 26. DATA EXPORT / IMPORT
+        // ──────────────────────────────────────────────────────────────
+        window.exportAllData = function () {
+            const data = {
+                tasks: tasks,
+                notes: notes,
+                meetings: meetings,
+                timeEntries: timeEntries,
+                files: files,
+                emails: emails,
+                profile: profileSettings,
+                exportedAt: new Date().toISOString(),
+                version: '2.0'
+            };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `DevAdvocate_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast('Data exported successfully!', 'success');
+        };
+
+        window.importAllData = function () { document.getElementById('importFileInput').click(); };
+
+        window.handleImport = function (event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (data.tasks) tasks = data.tasks;
+                    if (data.notes) notes = data.notes;
+                    if (data.meetings) meetings = data.meetings;
+                    if (data.timeEntries) timeEntries = data.timeEntries;
+                    if (data.files) files = data.files;
+                    if (data.emails) emails = data.emails;
+                    if (data.profile) profileSettings = { ...profileSettings, ...data.profile };
+
+                    saveFilesToStorage();
+                    saveEmailsToStorage();
+                    if (tasks.length > 0 && currentUser) {
+                        tasks.forEach(async t => {
+                            const { error } = await supabaseClient.from('tasks').upsert({
+                                ...t,
+                                user_id: currentUser.id
+                            }, { onConflict: 'id' });
+                            if (error) console.warn('Import task error:', error);
+                        });
+                    }
+                    if (notes.length > 0 && currentUser) {
+                        notes.forEach(async n => {
+                            const { error } = await supabaseClient.from('notes').upsert({
+                                ...n,
+                                user_id: currentUser.id
+                            }, { onConflict: 'id' });
+                            if (error) console.warn('Import note error:', error);
+                        });
+                    }
+                    if (meetings.length > 0 && currentUser) {
+                        meetings.forEach(async m => {
+                            const { error } = await supabaseClient.from('meetings').upsert({
+                                ...m,
+                                user_id: currentUser.id
+                            }, { onConflict: 'id' });
+                            if (error) console.warn('Import meeting error:', error);
+                        });
+                    }
+                    if (timeEntries.length > 0 && currentUser) {
+                        timeEntries.forEach(async te => {
+                            const { error } = await supabaseClient.from('time_entries').upsert({
+                                ...te,
+                                user_id: currentUser.id
+                            }, { onConflict: 'id' });
+                            if (error) console.warn('Import time entry error:', error);
+                        });
+                    }
+
+                    applyProfileToUI();
+                    renderAll();
+                    showToast('Data imported successfully!', 'success');
+                } catch (_) {
+                    Swal.fire({ icon: 'error', title: 'Import Failed', text: 'Invalid backup file format.' });
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        };
+
+        window.clearAllData = function () {
+            Swal.fire({
+                title: 'Clear All Data?',
+                text: 'This will permanently delete all your local data. Your Supabase data will remain.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                cancelButtonColor: '#6b7280',
+                confirmButtonText: 'Yes, clear everything'
+            }).then(result => {
+                if (result.isConfirmed) {
+                    tasks = [];
+                    notes = [];
+                    meetings = [];
+                    timeEntries = [];
+                    files = [];
+                    emails = [];
+                    localStorage.removeItem('devhub_files');
+                    localStorage.removeItem('devhub_emails');
+                    localStorage.removeItem('timerState');
+                    localStorage.removeItem('workTimerState');
+                    renderAll();
+                    showToast('All local data cleared', 'info');
+                }
+            });
+        };
+
+        function renderAll() {
+            renderTasks();
+            renderNotes();
+            renderMeetings();
+            renderTimeEntries();
+            renderFiles();
+            renderFolderTree();
+            renderEmails();
+            renderCalendar();
+            renderPlanner();
+            updateDashboard();
+            updateInsights();
+            populateTimerSelect();
+            populateReportAssigneeFilter();
+            updateReport();
+        }
+
+        // ──────────────────────────────────────────────────────────────
+        // 27. NAVIGATION
+        // ──────────────────────────────────────────────────────────────
+        function showAppLoader() {
+            const loader = document.getElementById('appLoader');
+            if (!loader) return;
+            clearTimeout(loader._failsafe);
+            loader.classList.remove('hidden');
+            loader._failsafe = window.setTimeout(hideAppLoader, 15000);
+        }
+
+        function hideAppLoader() {
+            const loader = document.getElementById('appLoader');
+            if (!loader) return;
+            clearTimeout(loader._failsafe);
+            loader.classList.add('hidden');
+        }
+
+        function showPageSkeleton(page) {
+            const target = document.getElementById(`page-${page}`);
+            if (!target) return;
+            target.classList.add('page-skeleton-loading');
+            window.setTimeout(() => target.classList.remove('page-skeleton-loading'), 320);
+        }
+
+        function setupNavigation() {
+            document.getElementById('sidebarNav').addEventListener('click', (e) => {
+                const item = e.target.closest('.nav-item');
+                if (item) {
+                    e.preventDefault();
+                    const page = item.dataset.page;
+                    navigateTo(page);
+                }
+            });
+        }
+
+        window.navigateTo = async function (page) {
+            showAppLoader();
+            showPageSkeleton(page);
+            document.querySelectorAll('#sidebarNav .nav-item').forEach(el => el.classList.remove('active'));
+            const navItem = document.querySelector(`#sidebarNav .nav-item[data-page="${page}"]`);
+            if (navItem) navItem.classList.add('active');
+
+            document.querySelectorAll('#mobileNavContainer .nav-item-mobile').forEach(el => el.classList.remove('active'));
+            const mobileItem = document.querySelector(`#mobileNavContainer .nav-item-mobile[data-page="${page}"]`);
+            if (mobileItem) mobileItem.classList.add('active');
+
+            const titles = {
+                dashboard: 'Dashboard',
+                mywork: 'My Work',
+                tasks: 'Task Board',
+                time: 'Time Tracking',
+                notes: 'Notes',
+                meetings: 'Meetings',
+                calendar: 'Calendar',
+                planner: 'Daily Planner',
+                files: 'File Manager',
+                emails: 'Email Organizer',
+                teams: 'Teams & Departments',
+                workspace: 'Team Workspace',
+                whiteboard: 'Whiteboard',
+                insights: 'Insights',
+                tools: 'Integrations',
+                reports: 'Reports',
+                settings: 'Profile & Settings'
+            };
+            document.getElementById('pageTitle').textContent = titles[page] || 'Dashboard';
+
+            document.querySelectorAll('[id^="page-"]').forEach(el => el.classList.add('hidden'));
+            const target = document.getElementById(`page-${page}`);
+            if (target) target.classList.remove('hidden');
+
+            if (page === 'tasks') renderTasks();
+            if (page === 'mywork'){ 
+                renderMyWork(); 
+                await initMyWork();
+            };
+            if (page === 'notes') renderNotes();
+            if (page === 'meetings') renderMeetings();
+            if (page === 'calendar') renderCalendar();
+            if (page === 'planner') {
+                renderPlanner();
+                // Initialize support ticket tracker
+                setTimeout(() => {
+                    initSupportTicketTracker();
+                }, 100);
+            }
+            if (page === 'files') {
+                renderFiles();
+                renderFolderTree();
+            }
+            if (page === 'emails') renderEmails();
+            if (page === 'teams') renderTeams();
+            if (page === 'workspace') refreshWorkspace();
+            if (page === 'whiteboard') { initWhiteboard(); }
+            if (page === 'insights') updateInsights();
+            if (page === 'time') {
+                renderTimeEntries();
+                populateTimerSelect();
+                updateWorkTimerDisplays();
+            }
+            if (page === 'reports') {
+                populateReportAssigneeFilter();
+                updateReport();
+            }
+            if (page === 'dashboard') {
+                updateDashboard();
+                updateWorkTimerDisplays();
+                updateDashboardTimerWidget();
+            }
+            if (page === 'settings') applyProfileToUI();
+
+            try { localStorage.setItem('adv_last_page', page); } catch (_) { }
+            closeMobileMenu();
+            window.setTimeout(hideAppLoader, 220);
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 28. MODAL HELPERS
+        // ──────────────────────────────────────────────────────────────
+        function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+        window.closeModal = closeModal;
+
+        document.querySelectorAll('.modal-overlay').forEach(el => {
+            el.addEventListener('click', (e) => { if (e.target === el) { el.classList.add('hidden'); } });
+        });
+
+        // ──────────────────────────────────────────────────────────────
+        // 29. UTILITY
+        // ──────────────────────────────────────────────────────────────
+        function escHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        window.refreshData = function () {
+            if (!currentUser) return;
+            loadAllData();
+            loadFiles();
+            loadEmails();
+            loadTeams();
+            loadWorkspaceData();
+            showToast('Data refreshed!', 'success');
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 30. WHITEBOARD (Paint-style drawing)
+        // ──────────────────────────────────────────────────────────────
+        const wb = {
+            canvas: null,
+            ctx: null,
+            isDrawing: false,
+            tool: 'pen',
+            color: '#4f46e5',
+            size: 4,
+            lastX: 0,
+            lastY: 0,
+            history: [],
+            historyIndex: -1,
+            maxHistory: 30,
+            isFullscreen: false,
+            isDrawingShape: false,
+            shapeStartX: 0,
+            shapeStartY: 0,
+            shapePreview: null,
+            zoom: 1,
+            panX: 0,
+            panY: 0,
+            isPanning: false,
+            panStartX: 0,
+            panStartY: 0,
+            hasUnsavedChanges: false,
+            savedData: null,
+            userId: null
+        };
+
+        function initWhiteboard() {
+            const canvas = document.getElementById('whiteboardCanvas');
+            if (!canvas) return;
+            wb.canvas = canvas;
+            wb.ctx = canvas.getContext('2d');
+            wb.userId = currentUser?.id || 'local';
+
+            resizeWhiteboardCanvas();
+
+            // Load saved drawing
+            loadWhiteboardDrawing();
+
+            // Set up event listeners
+            canvas.addEventListener('mousedown', onWhiteboardPointerDown);
+            canvas.addEventListener('mousemove', onWhiteboardPointerMove);
+            canvas.addEventListener('mouseup', onWhiteboardPointerUp);
+            canvas.addEventListener('mouseleave', onWhiteboardPointerUp);
+
+            canvas.addEventListener('touchstart', onWhiteboardTouchStart, { passive: false });
+            canvas.addEventListener('touchmove', onWhiteboardTouchMove, { passive: false });
+            canvas.addEventListener('touchend', onWhiteboardTouchEnd, { passive: false });
+
+            // Resize handler
+            window.addEventListener('resize', () => {
+                if (!wb.isFullscreen) resizeWhiteboardCanvas();
+            });
+
+            // Update size label
+            const sizeInput = document.getElementById('whiteboardSize');
+            const sizeLabel = document.getElementById('whiteboardSizeLabel');
+            if (sizeInput && sizeLabel) {
+                sizeLabel.textContent = sizeInput.value;
+            }
+
+            // Set initial tool active state
+            updateToolButtons('pen');
+
+            // Keyboard shortcuts for whiteboard are handled in setupKeyboardShortcuts
+
+            // Status
+            updateWhiteboardStatus('Ready');
+        }
+
+        function resizeWhiteboardCanvas() {
+            const canvas = wb.canvas;
+            if (!canvas) return;
+            const rect = canvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            const w = rect.width || canvas.parentElement?.clientWidth || 800;
+            const h = rect.height || 400;
+
+            // Store current drawing data
+            let currentData = null;
+            try {
+                if (wb.ctx && canvas.width > 0 && canvas.height > 0) {
+                    currentData = wb.ctx.getImageData(0, 0, canvas.width, canvas.height);
+                }
+            } catch (_) { }
+
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+
+            // Restore drawing data
+            if (currentData) {
+                try {
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = currentData.width;
+                    tempCanvas.height = currentData.height;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    tempCtx.putImageData(currentData, 0, 0);
+                    ctx.drawImage(tempCanvas, 0, 0, w, h);
+                } catch (_) { }
+            }
+
+            wb.ctx = ctx;
+            // Reset transform
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            wb.zoom = 1;
+            wb.panX = 0;
+            wb.panY = 0;
+
+            updateWhiteboardZoomLabel();
+        }
+
+        function getCanvasCoords(e) {
+            const canvas = wb.canvas;
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left);
+            const y = (e.clientY - rect.top);
+            return { x, y };
+        }
+
+        function onWhiteboardPointerDown(e) {
+            e.preventDefault();
+            const { x, y } = getCanvasCoords(e);
+            wb.isDrawing = true;
+            wb.lastX = x;
+            wb.lastY = y;
+            wb.shapeStartX = x;
+            wb.shapeStartY = y;
+
+            // For shape tools, we need to save a preview state
+            if (['line', 'rectangle', 'circle'].includes(wb.tool)) {
+                wb.isDrawingShape = true;
+                // Save current state for shape preview
+                try {
+                    const ctx = wb.ctx;
+                    wb.shapePreview = ctx.getImageData(0, 0, wb.canvas.width, wb.canvas.height);
+                } catch (_) { }
+            } else {
+                // For pen/eraser, draw a dot
+                drawDot(x, y);
+            }
+
+            updateWhiteboardStatus(`Drawing with ${wb.tool}`);
+        }
+
+        function onWhiteboardPointerMove(e) {
+            e.preventDefault();
+            if (!wb.isDrawing) return;
+            const { x, y } = getCanvasCoords(e);
+
+            if (['line', 'rectangle', 'circle'].includes(wb.tool) && wb.isDrawingShape) {
+                // Show shape preview
+                drawShapePreview(x, y);
+                return;
+            }
+
+            // Pen or eraser - draw line
+            drawLine(wb.lastX, wb.lastY, x, y);
+            wb.lastX = x;
+            wb.lastY = y;
+        }
+
+        function onWhiteboardPointerUp(e) {
+            if (!wb.isDrawing) return;
+            wb.isDrawing = false;
+
+            if (['line', 'rectangle', 'circle'].includes(wb.tool) && wb.isDrawingShape) {
+                wb.isDrawingShape = false;
+                // Finalize the shape
+                const { x, y } = e ? getCanvasCoords(e) : { x: wb.lastX, y: wb.lastY };
+                drawShapeFinal(wb.shapeStartX, wb.shapeStartY, x, y);
+                wb.shapePreview = null;
+            }
+
+            // Save to history
+            saveWhiteboardHistory();
+
+            // Auto-save
+            autoSaveWhiteboard();
+
+            updateWhiteboardStatus('Ready');
+        }
+
+        function onWhiteboardTouchStart(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            wb.canvas.dispatchEvent(mouseEvent);
+        }
+
+        function onWhiteboardTouchMove(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            wb.canvas.dispatchEvent(mouseEvent);
+        }
+
+        function onWhiteboardTouchEnd(e) {
+            e.preventDefault();
+            const mouseEvent = new MouseEvent('mouseup', {});
+            wb.canvas.dispatchEvent(mouseEvent);
+        }
+
+        function drawDot(x, y) {
+            const ctx = wb.ctx;
+            const size = wb.tool === 'eraser' ? wb.size * 2 : wb.size;
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+            if (wb.tool === 'eraser') {
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowColor = 'transparent';
+            } else {
+                ctx.fillStyle = wb.color;
+                ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                ctx.shadowBlur = 2;
+            }
+            ctx.fill();
+            ctx.restore();
+            wb.hasUnsavedChanges = true;
+        }
+
+        function drawLine(x1, y1, x2, y2) {
+            const ctx = wb.ctx;
+            const size = wb.tool === 'eraser' ? wb.size * 2 : wb.size;
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.lineWidth = size;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            if (wb.tool === 'eraser') {
+                ctx.strokeStyle = '#ffffff';
+                ctx.shadowColor = 'transparent';
+            } else {
+                ctx.strokeStyle = wb.color;
+                ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                ctx.shadowBlur = 2;
+            }
+            ctx.stroke();
+            ctx.restore();
+            wb.hasUnsavedChanges = true;
+        }
+
+        function drawShapePreview(x, y) {
+            const ctx = wb.ctx;
+            // Restore from saved preview
+            if (wb.shapePreview) {
+                try {
+                    ctx.putImageData(wb.shapePreview, 0, 0);
+                } catch (_) { }
+            }
+
+            const sx = wb.shapeStartX;
+            const sy = wb.shapeStartY;
+            const size = wb.tool === 'eraser' ? wb.size * 2 : wb.size;
+
+            ctx.save();
+            ctx.beginPath();
+
+            if (wb.tool === 'line') {
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(x, y);
+                ctx.lineWidth = size;
+                ctx.strokeStyle = wb.color;
+                ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                ctx.shadowBlur = 2;
+                ctx.stroke();
+            } else if (wb.tool === 'rectangle') {
+                const rx = Math.min(sx, x);
+                const ry = Math.min(sy, y);
+                const rw = Math.abs(x - sx);
+                const rh = Math.abs(y - sy);
+                ctx.rect(rx, ry, rw, rh);
+                ctx.lineWidth = size;
+                ctx.strokeStyle = wb.color;
+                ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                ctx.shadowBlur = 2;
+                ctx.stroke();
+            } else if (wb.tool === 'circle') {
+                const cx = (sx + x) / 2;
+                const cy = (sy + y) / 2;
+                const radius = Math.max(1, Math.sqrt((x - sx) ** 2 + (y - sy) ** 2) / 2);
+                ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                ctx.lineWidth = size;
+                ctx.strokeStyle = wb.color;
+                ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                ctx.shadowBlur = 2;
+                ctx.stroke();
+            }
+
+            ctx.restore();
+            wb.hasUnsavedChanges = true;
+        }
+
+        function drawShapeFinal(sx, sy, x, y) {
+            const ctx = wb.ctx;
+            const size = wb.tool === 'eraser' ? wb.size * 2 : wb.size;
+
+            ctx.save();
+            ctx.beginPath();
+
+            if (wb.tool === 'line') {
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(x, y);
+                ctx.lineWidth = size;
+                ctx.strokeStyle = wb.color;
+                ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                ctx.shadowBlur = 2;
+                ctx.stroke();
+            } else if (wb.tool === 'rectangle') {
+                const rx = Math.min(sx, x);
+                const ry = Math.min(sy, y);
+                const rw = Math.abs(x - sx);
+                const rh = Math.abs(y - sy);
+                ctx.rect(rx, ry, rw, rh);
+                ctx.lineWidth = size;
+                ctx.strokeStyle = wb.color;
+                ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                ctx.shadowBlur = 2;
+                ctx.stroke();
+            } else if (wb.tool === 'circle') {
+                const cx = (sx + x) / 2;
+                const cy = (sy + y) / 2;
+                const radius = Math.max(1, Math.sqrt((x - sx) ** 2 + (y - sy) ** 2) / 2);
+                ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                ctx.lineWidth = size;
+                ctx.strokeStyle = wb.color;
+                ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                ctx.shadowBlur = 2;
+                ctx.stroke();
+            }
+
+            ctx.restore();
+            wb.hasUnsavedChanges = true;
+        }
+
+        function saveWhiteboardHistory() {
+            try {
+                const ctx = wb.ctx;
+                const data = ctx.getImageData(0, 0, wb.canvas.width, wb.canvas.height);
+
+                // Remove any future states
+                wb.history = wb.history.slice(0, wb.historyIndex + 1);
+
+                // Add current state
+                wb.history.push(data);
+
+                // Limit history
+                if (wb.history.length > wb.maxHistory) {
+                    wb.history.shift();
+                }
+
+                wb.historyIndex = wb.history.length - 1;
+            } catch (_) { }
+        }
+
+        function restoreWhiteboardHistory(index) {
+            try {
+                const ctx = wb.ctx;
+                const data = wb.history[index];
+                if (!data) return;
+                ctx.putImageData(data, 0, 0);
+                wb.historyIndex = index;
+                wb.hasUnsavedChanges = true;
+                autoSaveWhiteboard();
+                updateWhiteboardStatus(`Restored state ${index + 1}/${wb.history.length}`);
+            } catch (_) { }
+        }
+
+        window.undoWhiteboard = function () {
+            if (wb.historyIndex <= 0) {
+                showToast('Nothing to undo', 'info');
+                return;
+            }
+            restoreWhiteboardHistory(wb.historyIndex - 1);
+            showToast('Undo', 'info');
+        };
+
+        window.redoWhiteboard = function () {
+            if (wb.historyIndex >= wb.history.length - 1) {
+                showToast('Nothing to redo', 'info');
+                return;
+            }
+            restoreWhiteboardHistory(wb.historyIndex + 1);
+            showToast('Redo', 'info');
+        };
+
+        window.clearWhiteboard = function () {
+            Swal.fire({
+                title: 'Clear Whiteboard?',
+                text: 'This action cannot be undone.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#ef4444',
+                cancelButtonColor: '#6b7280',
+                confirmButtonText: 'Yes, clear'
+            }).then(result => {
+                if (result.isConfirmed) {
+                    const ctx = wb.ctx;
+                    ctx.clearRect(0, 0, wb.canvas.width, wb.canvas.height);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, wb.canvas.width, wb.canvas.height);
+                    wb.history = [];
+                    wb.historyIndex = -1;
+                    wb.hasUnsavedChanges = true;
+                    saveWhiteboardHistory();
+                    autoSaveWhiteboard();
+                    showToast('Whiteboard cleared', 'info');
+                    updateWhiteboardStatus('Cleared');
+                }
+            });
+        };
+
+        window.setWhiteboardTool = function (tool) {
+            wb.tool = tool;
+            wb.isDrawingShape = false;
+            updateToolButtons(tool);
+            // Reset cursor
+            const canvas = wb.canvas;
+            if (canvas) {
+                canvas.style.cursor = tool === 'eraser' ? 'cell' : 'crosshair';
+            }
+            updateWhiteboardStatus(`Tool: ${tool}`);
+        };
+
+        window.setWhiteboardColor = function (color) {
+            wb.color = color;
+            const input = document.getElementById('whiteboardColor');
+            if (input) input.value = color;
+        };
+
+        window.setWhiteboardSize = function (size) {
+            wb.size = parseInt(size, 10) || 4;
+            const label = document.getElementById('whiteboardSizeLabel');
+            if (label) label.textContent = wb.size;
+        };
+
+        function updateToolButtons(activeTool) {
+            document.querySelectorAll('.whiteboard-tool').forEach(btn => {
+                btn.classList.remove('active');
+                const tool = btn.dataset.tool;
+                if (tool === activeTool) {
+                    btn.classList.add('active');
+                    btn.style.background = '#4f46e5';
+                    btn.style.color = '#fff';
+                } else {
+                    btn.style.background = '';
+                    btn.style.color = '';
+                }
+            });
+        }
+
+        function updateWhiteboardStatus(msg) {
+            const el = document.getElementById('wbStatus');
+            if (el) el.textContent = msg;
+        }
+
+        function updateWhiteboardZoomLabel() {
+            const el = document.getElementById('wbZoom');
+            if (el) el.textContent = Math.round(wb.zoom * 100) + '%';
+        }
+
+        function autoSaveWhiteboard() {
+            try {
+                const dataUrl = wb.canvas.toDataURL('image/png');
+                const key = `wb_drawing_${wb.userId}`;
+                localStorage.setItem(key, dataUrl);
+                wb.savedData = dataUrl;
+            } catch (_) { }
+        }
+
+        function loadWhiteboardDrawing() {
+            try {
+                const key = `wb_drawing_${wb.userId}`;
+                const dataUrl = localStorage.getItem(key);
+                if (!dataUrl) {
+                    // Initialize with white background
+                    const ctx = wb.ctx;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, wb.canvas.width, wb.canvas.height);
+                    saveWhiteboardHistory();
+                    return;
+                }
+
+                const img = new Image();
+                img.onload = () => {
+                    const ctx = wb.ctx;
+                    ctx.drawImage(img, 0, 0, wb.canvas.width, wb.canvas.height);
+                    saveWhiteboardHistory();
+                    wb.savedData = dataUrl;
+                    updateWhiteboardStatus('Restored');
+                };
+                img.onerror = () => {
+                    // Fallback: white background
+                    const ctx = wb.ctx;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, wb.canvas.width, wb.canvas.height);
+                    saveWhiteboardHistory();
+                };
+                img.src = dataUrl;
+            } catch (_) {
+                // Fallback: white background
+                const ctx = wb.ctx;
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, wb.canvas.width, wb.canvas.height);
+                saveWhiteboardHistory();
+            }
+        }
+
+        window.saveWhiteboard = function () {
+            autoSaveWhiteboard();
+            showToast('Whiteboard saved!', 'success');
+            updateWhiteboardStatus('Saved');
+        };
+
+        window.downloadWhiteboard = function () {
+            const canvas = wb.canvas;
+            if (!canvas) return;
+            try {
+                // Create a temporary canvas with white background
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = canvas.width;
+                tempCanvas.height = canvas.height;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.fillStyle = '#ffffff';
+                tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+                tempCtx.drawImage(canvas, 0, 0);
+
+                const link = document.createElement('a');
+                link.download = `whiteboard_${new Date().toISOString().slice(0, 10)}.png`;
+                link.href = tempCanvas.toDataURL('image/png');
+                link.click();
+                showToast('PNG downloaded!', 'success');
+            } catch (_) {
+                showToast('Could not export PNG', 'error');
+            }
+        };
+
+        window.toggleWhiteboardFullscreen = function () {
+            const shell = document.getElementById('whiteboardShell');
+            if (!shell) return;
+            wb.isFullscreen = !wb.isFullscreen;
+            shell.classList.toggle('fullscreen', wb.isFullscreen);
+            const closeButton = document.getElementById('whiteboardCloseFullscreen');
+            if (closeButton) closeButton.classList.toggle('visible', wb.isFullscreen);
+
+            const btn = document.querySelector('[onclick="toggleWhiteboardFullscreen()"]');
+            if (btn) {
+                btn.innerHTML = wb.isFullscreen ?
+                    '<i class="fas fa-compress mr-1"></i> Exit fullscreen' :
+                    '<i class="fas fa-expand mr-1"></i> Full screen';
+            }
+
+            // Resize canvas after transition
+            setTimeout(() => {
+                resizeWhiteboardCanvas();
+                // Restore drawing
+                if (wb.savedData) {
+                    try {
+                        const img = new Image();
+                        img.onload = () => {
+                            const ctx = wb.ctx;
+                            ctx.drawImage(img, 0, 0, wb.canvas.width, wb.canvas.height);
+                        };
+                        img.src = wb.savedData;
+                    } catch (_) { }
+                }
+            }, 100);
+
+            if (wb.isFullscreen) {
+                document.body.style.overflow = 'hidden';
+            } else {
+                document.body.style.overflow = '';
+            }
+
+            updateWhiteboardStatus(wb.isFullscreen ? 'Fullscreen' : 'Windowed');
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // 30b. DOCUMENT STUDIO
+        // ──────────────────────────────────────────────────────────────
+        function studioKey() { return `adv_document_studio_${currentUser?.id || 'local'}`; }
+        function studioData() {
+            try { return JSON.parse(localStorage.getItem(studioKey()) || 'null'); } catch (_) { return null; }
+        }
+
+        function populateStudioFolders() {
+            const select = document.getElementById('studioFolder');
+            if (!select) return;
+            const folderNames = [...new Set(files.filter(file => file.type === 'folder').map(file => file.name).filter(Boolean))];
+            select.innerHTML = '<option value="root">Root folder</option>' + folderNames.map(name => `<option value="${escHtml(name)}">${escHtml(name)}</option>`).join('');
+        }
+
+        function isStudioFile(file) {
+            return file && file.type !== 'folder';
+        }
+
+        window.loadStudioFiles = function () {
+            const list = document.getElementById('studioFilesList');
+            if (!list) return;
+            populateStudioFolders();
+            const studioFiles = files.filter(isStudioFile);
+            if (!studioFiles.length) { list.innerHTML = '<div class="text-sm text-gray-400 md:col-span-2">No studio files yet. Save a draft to create one.</div>'; return; }
+            list.innerHTML = studioFiles.map(file => `<div class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 bg-gray-50"><i class="fas fa-file-${file.type?.includes('word') ? 'word' : file.type?.includes('presentation') ? 'powerpoint' : 'lines'} text-cyan-500 text-xl"></i><div class="flex-1 min-w-0"><div class="text-sm font-medium text-gray-800 truncate" title="${escHtml(file.name)}">${escHtml(file.name.replace(/^studio_/, ''))}</div><div class="text-xs text-gray-400">${escHtml(file.folder || 'root')} · ${file.uploaded_at ? new Date(file.uploaded_at).toLocaleDateString() : ''}</div></div><div class="flex gap-1"><button type="button" onclick="updateStudioFile('${file.id}')" class="px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 rounded" title="Update this file"><i class="fas fa-pen"></i></button><button type="button" onclick="deleteStudioFile('${file.id}')" class="px-2 py-1 text-xs text-red-500 hover:bg-red-50 rounded" title="Delete this file"><i class="fas fa-trash"></i></button></div></div>`).join('');
+        };
+
+        window.updateStudioFile = async function (id) {
+            const file = files.find(item => String(item.id) === String(id));
+            if (!file) return;
+            studioEditingFile = file;
+            document.getElementById('studioFileName').value = file.name.replace(/^studio_/, '').replace(/\.[a-z0-9]+$/i, '');
+            document.getElementById('studioFolder').value = file.folder || 'root';
+            const extension = file.name.split('.').pop().toLowerCase();
+            const type = extension === 'docx' ? 'docx' : extension === 'pptx' ? 'pptx' : 'txt';
+            document.getElementById('studioType').value = type;
+            switchStudioType(type);
+            if (type === 'txt' && file.url) {
+                try { document.getElementById('studioTxtContent').value = await (await fetch(file.url)).text(); } catch (_) { showToast('Could not load file content', 'error'); }
+            }
+            document.getElementById('documentStudio').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            showToast('File loaded for update', 'info');
+        };
+
+        window.deleteStudioFile = async function (id) {
+            const file = files.find(item => String(item.id) === String(id));
+            if (!file) return;
+            const result = await Swal.fire({ title: 'Delete studio file?', text: file.name, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
+            if (!result.isConfirmed) return;
+            try {
+                if (file.path) { const { error } = await supabaseClient.storage.from('files').remove([file.path]); if (error) throw error; }
+                const { error: metadataError } = await supabaseClient.from('files').delete().eq('id', file.id).eq('user_id', currentUser.id);
+                if (metadataError) throw metadataError;
+                files = files.filter(item => String(item.id) !== String(id)); saveFilesToStorage(); loadStudioFiles(); renderFiles(); showToast('Studio file deleted', 'success');
+            } catch (error) { showToast(error.message || 'Could not delete studio file', 'error'); }
+        };
+
+        function initDocumentStudio() {
+            const saved = studioData();
+            if (saved) {
+                document.getElementById('studioType').value = saved.type || 'txt';
+                document.getElementById('studioFileName').value = saved.name || 'my-document';
+                document.getElementById('studioTxtContent').value = saved.text || '';
+                document.getElementById('studioDocxContent').innerHTML = saved.docx || '';
+                document.getElementById('studioSlides').innerHTML = '';
+                (saved.slides || []).forEach(slide => addStudioSlide(slide));
+            }
+            if (!document.querySelector('#studioSlides .studio-slide')) addStudioSlide();
+            switchStudioType(document.getElementById('studioType').value);
+            populateStudioFolders();
+            loadStudioFiles();
+        }
+
+        window.toggleCollapsibleCard = function (id) {
+            const card = document.getElementById(id);
+            if (!card) return;
+            const collapsed = card.classList.toggle('card-collapsed');
+            const button = card.querySelector('.collapse-card-btn');
+            if (button) {
+                const cardLabel = id === 'whiteboardShell' ? 'paint board' : id === 'studioFilesCard' ? 'Files' : 'Document Studio';
+                button.title = collapsed ? 'Expand card' : `Collapse ${cardLabel}`;
+                button.setAttribute('aria-label', button.title);
+                button.innerHTML = `<i class="fas fa-chevron-${collapsed ? 'down' : 'up'}"></i>`;
+            }
+            localStorage.setItem(`adv_${id}_collapsed`, collapsed ? '1' : '0');
+        };
+
+        function restoreCollapsibleCards() {
+            ['whiteboardShell', 'studioFilesCard', 'documentStudio'].forEach(id => {
+                if (localStorage.getItem(`adv_${id}_collapsed`) !== '1') return;
+                const card = document.getElementById(id);
+                if (card && !card.classList.contains('card-collapsed')) window.toggleCollapsibleCard(id);
+            });
+        }
+
+        function studioFileName(extension) {
+            const name = document.getElementById('studioFileName').value.trim() || 'my-document';
+            return `${name.replace(/\.[a-z0-9]+$/i, '').replace(/[^a-z0-9_-]+/gi, '_') || 'my-document'}.${extension}`;
+        }
+
+        window.switchStudioType = function (type) {
+            document.getElementById('studioTxtPanel').classList.toggle('hidden', type !== 'txt');
+            document.getElementById('studioDocxPanel').classList.toggle('hidden', type !== 'docx');
+            document.getElementById('studioPptxPanel').classList.toggle('hidden', type !== 'pptx');
+            const ext = type === 'txt' ? 'txt' : type;
+            document.getElementById('studioFileName').placeholder = `File name (${ext})`;
+        };
+
+        window.studioFormat = function (command, value) {
+            const editor = document.getElementById('studioDocxContent');
+            editor.focus();
+            document.execCommand(command, false, value || null);
+        };
+
+        window.addStudioSlide = function (slide = {}) {
+            const container = document.getElementById('studioSlides');
+            const card = document.createElement('div');
+            card.className = 'studio-slide border border-gray-200 rounded-lg p-4 bg-gray-50';
+            card.innerHTML = `<div class="flex justify-between items-center mb-2"><strong class="text-sm text-gray-700 studio-slide-number"></strong><button type="button" onclick="this.closest('.studio-slide').remove(); renumberStudioSlides();" class="text-red-500 text-xs"><i class="fas fa-trash"></i></button></div><input class="studio-slide-title w-full px-3 py-2 mb-2 border border-gray-200 rounded-lg text-sm" placeholder="Slide title" value="${escHtml(slide.title || '')}"><textarea class="studio-slide-body w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" rows="4" placeholder="Slide content, one bullet per line">${escHtml(slide.body || '')}</textarea>`;
+            container.appendChild(card);
+            renumberStudioSlides();
+        };
+
+        function renumberStudioSlides() {
+            document.querySelectorAll('#studioSlides .studio-slide-number').forEach((el, index) => { el.textContent = `Slide ${index + 1}`; });
+        }
+
+        window.saveStudioDraft = async function () {
+            const type = document.getElementById('studioType').value;
+            const data = { type, name: document.getElementById('studioFileName').value, text: document.getElementById('studioTxtContent').value, docx: document.getElementById('studioDocxContent').innerHTML, slides: [...document.querySelectorAll('#studioSlides .studio-slide')].map(slide => ({ title: slide.querySelector('.studio-slide-title').value, body: slide.querySelector('.studio-slide-body').value })) };
+            localStorage.setItem(studioKey(), JSON.stringify(data));
+            const status = document.getElementById('studioStatus');
+            status.textContent = 'Saving to Supabase...';
+            try {
+                if (!currentUser) throw new Error('Sign in to save drafts to Supabase');
+                const blob = await createStudioBlob(type);
+                const fileName = studioFileName(type);
+                const folder = document.getElementById('studioFolder').value || 'root';
+                const storageFolder = folder === 'root' ? 'root' : folder.replace(/[^a-z0-9_-]/gi, '_');
+                const path = studioEditingFile?.path || `${currentUser.id}/${storageFolder}/${Date.now()}_studio_${fileName}`;
+                const { error: uploadError } = await supabaseClient.storage.from('files').upload(path, blob, { cacheControl: '3600', upsert: !!studioEditingFile, contentType: blob.type });
+                if (uploadError) throw uploadError;
+                const { data: signed } = await supabaseClient.storage.from('files').createSignedUrl(path, 86400);
+                const metadata = { name: studioEditingFile?.name || `studio_${fileName}`, path, url: signed?.signedUrl || null, type: blob.type, size: blob.size, folder, uploaded_at: new Date().toISOString(), user_id: currentUser.id };
+                let savedFile;
+                if (studioEditingFile) {
+                    const { data: updated, error: metadataError } = await supabaseClient.from('files').update(metadata).eq('id', studioEditingFile.id).eq('user_id', currentUser.id).select().maybeSingle();
+                    if (metadataError) throw metadataError;
+                    savedFile = { ...metadata, id: updated?.id || studioEditingFile.id, stored: 'supabase' };
+                    files = files.map(file => String(file.id) === String(studioEditingFile.id) ? savedFile : file);
+                } else {
+                    const { data: inserted, error: metadataError } = await supabaseClient.from('files').insert([metadata]).select().maybeSingle();
+                    if (metadataError) throw metadataError;
+                    savedFile = { ...metadata, id: inserted?.id || path, stored: 'supabase' };
+                    files.unshift(savedFile);
+                }
+                studioEditingFile = null;
+                saveFilesToStorage();
+                renderFiles();
+                renderFolderTree();
+                loadStudioFiles();
+                status.textContent = `Saved to Supabase ${new Date().toLocaleTimeString()}`;
+                showToast('Draft saved to Supabase', 'success');
+            } catch (error) {
+                status.textContent = `Saved locally ${new Date().toLocaleTimeString()}`;
+                showToast(`Saved locally. Supabase: ${error.message || 'upload failed'}`, 'info');
+            }
+        };
+
+        async function createStudioBlob(type) {
+            if (type === 'txt') return new Blob([document.getElementById('studioTxtContent').value], { type: 'text/plain;charset=utf-8' });
+            if (type === 'docx') {
+                if (!window.docx) throw new Error('DOCX library unavailable');
+                const { Document, Packer, Paragraph, TextRun, HeadingLevel } = window.docx;
+                const content = document.getElementById('studioDocxContent');
+                const children = [];
+                const addBlock = node => {
+                    if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) children.push(new Paragraph({ text: node.textContent.trim() }));
+                    if (node.nodeType !== Node.ELEMENT_NODE) return;
+                    const tag = node.tagName.toLowerCase();
+                    if (tag === 'table') {
+                        Array.from(node.querySelectorAll('tr')).forEach(row => children.push(new Paragraph({ text: Array.from(row.children).map(cell => cell.innerText.trim()).join(' | ') })));
+                    } else if (tag === 'ul' || tag === 'ol') {
+                        Array.from(node.children).forEach(item => children.push(new Paragraph({ text: item.innerText.trim(), bullet: tag === 'ul' ? { level: 0 } : undefined, numbering: tag === 'ol' ? { reference: 'studio-numbering', level: 0 } : undefined })));
+                    } else if (/^h[1-6]$/.test(tag)) children.push(new Paragraph({ text: node.innerText.trim(), heading: tag === 'h1' ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2 }));
+                    else if (tag !== 'br' && node.innerText.trim()) children.push(new Paragraph({ children: [new TextRun(node.innerText.trim())] }));
+                };
+                Array.from(content.childNodes).forEach(addBlock);
+                const file = new Document({ numbering: { config: [{ reference: 'studio-numbering', levels: [{ level: 0, format: window.docx.LevelFormat.DECIMAL, text: '%1.', alignment: 'left' }] }] }, sections: [{ children: children.length ? children : [new Paragraph({ text: '' })] }] });
+                return Packer.toBlob(file);
+            }
+            if (!window.PptxGenJS) throw new Error('PPTX library unavailable');
+            const pptx = new window.PptxGenJS();
+            pptx.layout = 'LAYOUT_WIDE';
+            document.querySelectorAll('#studioSlides .studio-slide').forEach(slide => { const page = pptx.addSlide(); page.background = { color: 'F8FAFC' }; page.addText(slide.querySelector('.studio-slide-title').value || 'Untitled slide', { x: 0.7, y: 0.6, w: 12, h: 0.7, fontSize: 28, bold: true, color: '1E293B' }); page.addText(slide.querySelector('.studio-slide-body').value.split(/\r?\n/).filter(Boolean).map(item => ({ text: item, options: { bullet: { indent: 18 } } })), { x: 1, y: 1.7, w: 11, h: 4.6, fontSize: 20, color: '334155', breakLine: true, valign: 'top' }); });
+            return pptx.write({ outputType: 'blob' });
+        }
+
+        window.downloadStudioFile = async function () {
+            const type = document.getElementById('studioType').value;
+            try {
+                if (type === 'txt') {
+                    downloadBlob(new Blob([document.getElementById('studioTxtContent').value], { type: 'text/plain;charset=utf-8' }), studioFileName('txt'));
+                } else if (type === 'docx') {
+                    if (!window.docx) throw new Error('DOCX library unavailable');
+                    const { Document, Packer, Paragraph, TextRun, HeadingLevel } = window.docx;
+                    const content = document.getElementById('studioDocxContent');
+                    const children = [];
+                    const addBlock = node => {
+                        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) children.push(new Paragraph({ text: node.textContent.trim() }));
+                        if (node.nodeType !== Node.ELEMENT_NODE) return;
+                        const tag = node.tagName.toLowerCase();
+                        if (tag === 'ul' || tag === 'ol') Array.from(node.children).forEach(item => children.push(new Paragraph({ text: item.innerText.trim(), bullet: tag === 'ul' ? { level: 0 } : undefined, numbering: tag === 'ol' ? { reference: 'studio-numbering', level: 0 } : undefined })));
+                        else if (/^h[1-6]$/.test(tag)) children.push(new Paragraph({ text: node.innerText.trim(), heading: tag === 'h1' ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2 }));
+                        else if (tag !== 'br' && node.innerText.trim()) children.push(new Paragraph({ children: [new TextRun(node.innerText.trim())] }));
+                    };
+                    Array.from(content.childNodes).forEach(addBlock);
+                    const file = new Document({ numbering: { config: [{ reference: 'studio-numbering', levels: [{ level: 0, format: window.docx.LevelFormat.DECIMAL, text: '%1.', alignment: 'left' }] }] }, sections: [{ children: children.length ? children : [new Paragraph({ text: '' })] }] });
+                    downloadBlob(await Packer.toBlob(file), studioFileName('docx'));
+                } else {
+                    if (!window.PptxGenJS) throw new Error('PPTX library unavailable');
+                    const pptx = new window.PptxGenJS();
+                    pptx.layout = 'LAYOUT_WIDE';
+                    document.querySelectorAll('#studioSlides .studio-slide').forEach(slide => { const page = pptx.addSlide(); page.background = { color: 'F8FAFC' }; page.addText(slide.querySelector('.studio-slide-title').value || 'Untitled slide', { x: 0.7, y: 0.6, w: 12, h: 0.7, fontSize: 28, bold: true, color: '1E293B' }); page.addText(slide.querySelector('.studio-slide-body').value.split(/\r?\n/).filter(Boolean).map(item => ({ text: item, options: { bullet: { indent: 18 } } })), { x: 1, y: 1.7, w: 11, h: 4.6, fontSize: 20, color: '334155', breakLine: true, valign: 'top' }); });
+                    await pptx.writeFile({ fileName: studioFileName('pptx') });
+                }
+                document.getElementById('studioStatus').textContent = `${type.toUpperCase()} downloaded`;
+                showToast(`${type.toUpperCase()} downloaded`, 'success');
+            } catch (error) { console.error(error); showToast(error.message || 'Could not create file', 'error'); }
+        };
+
+        // ──────────────────────────────────────────────────────────────
+        // SUPPORT TICKET HOURS TRACKER
+        // ──────────────────────────────────────────────────────────────
+
+        // Default columns configuration
+        const DEFAULT_SUPPORT_COLUMNS = [
+            { id: 'ticket', label: 'Ticket', type: 'text', width: '160px', editable: true, isFirst: true },
+            { id: 'sme_dev', label: 'SME /dev', type: 'number', width: '80px', editable: true },
+            { id: 'dev_advocate', label: 'Dev Advocate', type: 'number', width: '100px', editable: true },
+            { id: 'delivery', label: 'Delivery', type: 'number', width: '80px', editable: true },
+            { id: 'apo', label: "APO's", type: 'number', width: '70px', editable: true },
+            { id: 'type', label: 'Type', type: 'select', width: '120px', editable: true, options: ['API', 'Android SDK', 'IOS SDK', 'ARCHITECTURE', 'WEB', 'DATABASE', 'DEVOPS', 'OTHER'] },
+            { id: 'priority', label: 'Priority', type: 'select', width: '100px', editable: true, options: ['Major', 'Medium', 'Low', 'Critical', 'Blocker'] },
+            { id: 'status', label: 'STATUS', type: 'select', width: '110px', editable: true, options: ['DONE', 'OPEN', 'SUSPENDED', 'IN PROGRESS', 'BLOCKED', 'CLOSED'] },
+            {
+                id: 'total', label: 'Total', type: 'calculated', width: '80px', editable: false, calculate: (row) => {
+                    return (parseFloat(row.sme_dev) || 0) +
+                        (parseFloat(row.dev_advocate) || 0) +
+                        (parseFloat(row.delivery) || 0) +
+                        (parseFloat(row.apo) || 0);
+                }
+            }
+        ];
+
+        // State for support tickets
+        let supportTicketColumns = [...DEFAULT_SUPPORT_COLUMNS];
+        let supportTicketRows = [];
+        let supportTicketWeekStart = null;
+
+        // Initialize support ticket tracker
+        function initSupportTicketTracker() {
+            // Set default week start to current Monday
+            const today = new Date();
+            const monday = new Date(today);
+            monday.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
+
+            const weekInput = document.getElementById('supportTicketWeekStart');
+            if (weekInput && !weekInput.value) {
+                weekInput.value = monday.toISOString().split('T')[0];
+            }
+
+            loadSupportTicketData();
+        }
+
+        // Get storage key for support tickets
+        function getSupportTicketStorageKey(weekStart) {
+            return `support_tickets_${currentUser?.id || 'local'}_${weekStart}`;
+        }
+
+        // Load support ticket data from Supabase
+        async function loadSupportTicketData() {
+            const weekStart = document.getElementById('supportTicketWeekStart')?.value;
+            if (!weekStart) return;
+
+            supportTicketWeekStart = weekStart;
+
+            try {
+                // Try to load from Supabase first
+                if (currentUser) {
+                    const { data, error } = await supabaseClient
+                        .from('support_tickets')
+                        .select('*')
+                        .eq('user_id', currentUser.id)
+                        .eq('week_start', weekStart)
+                        .order('row_order', { ascending: true });
+
+                    if (!error && data && data.length > 0) {
+                        supportTicketRows = data.map(row => ({
+                            id: row.id,
+                            ticket: row.ticket,
+                            sme_dev: row.sme_dev,
+                            dev_advocate: row.dev_advocate,
+                            delivery: row.delivery,
+                            apo: row.apo,
+                            type: row.type,
+                            priority: row.priority,
+                            status: row.status,
+                            total: row.total,
+                            row_order: row.row_order
+                        }));
+
+                        // Load columns if saved
+                        if (data[0].columns_config) {
+                            supportTicketColumns = data[0].columns_config;
+                        }
+
+                        renderSupportTicketTable();
+                        return;
+                    }
+                }
+            } catch (error) {
+                console.warn('Could not load support tickets from Supabase:', error);
+            }
+
+            // Fallback to localStorage
+            try {
+                const stored = localStorage.getItem(getSupportTicketStorageKey(weekStart));
+                if (stored) {
+                    const parsed = JSON.parse(stored);
+                    supportTicketRows = parsed.rows || [];
+                    supportTicketColumns = parsed.columns || [...DEFAULT_SUPPORT_COLUMNS];
+                } else {
+                    // Initialize with sample data structure
+                    supportTicketRows = [
+                        { id: generateId(), ticket: '', sme_dev: '', dev_advocate: '', delivery: '', apo: '', type: '', priority: '', status: '' }
+                    ];
+                }
+            } catch (_) {
+                supportTicketRows = [
+                    { id: generateId(), ticket: '', sme_dev: '', dev_advocate: '', delivery: '', apo: '', type: '', priority: '', status: '' }
+                ];
+            }
+
+            renderSupportTicketTable();
+        }
+
+        // Generate unique ID
+        function generateId() {
+            return 'st_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        // Render the support ticket table
+        function renderSupportTicketTable() {
+            const thead = document.getElementById('supportTicketThead');
+            const tbody = document.getElementById('supportTicketTbody');
+            const tfoot = document.getElementById('supportTicketTfoot');
+
+            if (!thead || !tbody || !tfoot) return;
+
+            // Render header
+            let headerHtml = '<tr>';
+            supportTicketColumns.forEach(col => {
+                headerHtml += `<th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b border-gray-200" style="min-width: ${col.width || '80px'}">${escHtml(col.label)}</th>`;
+            });
+            headerHtml += '<th class="px-3 py-2 text-center text-xs font-semibold text-gray-600 border-b border-gray-200" style="width: 60px;">Actions</th>';
+            headerHtml += '</tr>';
+            thead.innerHTML = headerHtml;
+
+            // Render body
+            if (supportTicketRows.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${supportTicketColumns.length + 1}" class="text-center py-6 text-gray-400">No tickets added. Click "Add Row" to start tracking.</td></tr>`;
+            } else {
+                tbody.innerHTML = supportTicketRows.map((row, rowIndex) => {
+                    let rowHtml = '<tr class="hover:bg-gray-50 border-b border-gray-100">';
+
+                    supportTicketColumns.forEach(col => {
+                        const value = row[col.id] !== undefined ? row[col.id] : '';
+                        const isCalculated = col.type === 'calculated';
+                        const computedValue = isCalculated && col.calculate ? col.calculate(row) : value;
+
+                        if (col.type === 'select') {
+                            const options = (col.options || []).map(opt =>
+                                `<option value="${escHtml(opt)}" ${value === opt ? 'selected' : ''}>${escHtml(opt)}</option>`
+                            ).join('');
+                            rowHtml += `<td class="px-2 py-1">
+                        <select class="w-full px-2 py-1.5 border border-gray-200 rounded text-xs bg-white focus:ring-1 focus:ring-indigo-200 focus:border-indigo-400 outline-none" 
+                                onchange="updateSupportTicketCell(${rowIndex}, '${col.id}', this.value)">
+                            <option value="">--</option>
+                            ${options}
+                        </select>
+                    </td>`;
+                        } else if (isCalculated) {
+                            rowHtml += `<td class="px-3 py-1 text-center font-semibold text-gray-700">${computedValue || 0}</td>`;
+                        } else if (col.type === 'number') {
+                            rowHtml += `<td class="px-2 py-1">
+                        <input type="number" min="0" step="0.5" value="${value || ''}" 
+                               class="w-full px-2 py-1.5 border border-gray-200 rounded text-xs text-center focus:ring-1 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+                               onchange="updateSupportTicketCell(${rowIndex}, '${col.id}', this.value)"
+                               placeholder="0" />
+                    </td>`;
+                        } else {
+                            rowHtml += `<td class="px-2 py-1">
+                        <input type="text" value="${escHtml(value || '')}" 
+                               class="w-full px-2 py-1.5 border border-gray-200 rounded text-xs focus:ring-1 focus:ring-indigo-200 focus:border-indigo-400 outline-none"
+                               onchange="updateSupportTicketCell(${rowIndex}, '${col.id}', this.value)"
+                               placeholder="${col.id === 'ticket' ? 'SMARTMS-XXXXX' : ''}" />
+                    </td>`;
+                        }
+                    });
+
+                    // Actions column
+                    rowHtml += `<td class="px-2 py-1 text-center">
+                <button onclick="deleteSupportTicketRow(${rowIndex})" class="text-gray-400 hover:text-red-500 text-xs p-1 rounded hover:bg-red-50 transition" title="Delete row">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </td>`;
+
+                    rowHtml += '</tr>';
+                    return rowHtml;
+                }).join('');
+            }
+
+            // Render footer with totals
+            let footerHtml = '<tr>';
+            supportTicketColumns.forEach(col => {
+                if (col.type === 'number' || col.type === 'calculated') {
+                    const total = supportTicketRows.reduce((sum, row) => {
+                        if (col.type === 'calculated' && col.calculate) {
+                            return sum + (col.calculate(row) || 0);
+                        }
+                        return sum + (parseFloat(row[col.id]) || 0);
+                    }, 0);
+                    footerHtml += `<td class="px-3 py-2 text-center text-sm font-bold text-gray-800">${total}</td>`;
+                } else if (col.isFirst) {
+                    footerHtml += `<td class="px-3 py-2 text-sm font-bold text-gray-800">Total</td>`;
+                } else {
+                    footerHtml += `<td class="px-3 py-2"></td>`;
+                }
+            });
+            footerHtml += '<td></td>';
+            footerHtml += '</tr>';
+            tfoot.innerHTML = footerHtml;
+
+            // Update summary cards
+            updateSupportTicketSummary();
+        }
+
+        // Update summary cards
+        function updateSupportTicketSummary() {
+            const totalTickets = supportTicketRows.filter(row => row.ticket && row.ticket.trim()).length;
+            const totalHours = supportTicketRows.reduce((sum, row) => {
+                return sum +
+                    (parseFloat(row.sme_dev) || 0) +
+                    (parseFloat(row.dev_advocate) || 0) +
+                    (parseFloat(row.delivery) || 0) +
+                    (parseFloat(row.apo) || 0);
+            }, 0);
+            const completed = supportTicketRows.filter(row => row.status === 'DONE').length;
+            const open = supportTicketRows.filter(row =>
+                row.status && ['OPEN', 'IN PROGRESS', 'SUSPENDED', 'BLOCKED'].includes(row.status)
+            ).length;
+
+            document.getElementById('supportTotalTickets').textContent = totalTickets;
+            document.getElementById('supportTotalHours').textContent = totalHours;
+            document.getElementById('supportCompletedTickets').textContent = completed;
+            document.getElementById('supportOpenTickets').textContent = open;
+        }
+
+        // Update a cell value
+        window.updateSupportTicketCell = function (rowIndex, columnId, value) {
+            if (rowIndex >= 0 && rowIndex < supportTicketRows.length) {
+                supportTicketRows[rowIndex][columnId] = value;
+                renderSupportTicketTable();
+            }
+        };
+
+        // Add a new row
+        window.addSupportTicketRow = function () {
+            const newRow = {
+                id: generateId(),
+                row_order: supportTicketRows.length
+            };
+            supportTicketColumns.forEach(col => {
+                if (col.type !== 'calculated') {
+                    newRow[col.id] = '';
+                }
+            });
+            supportTicketRows.push(newRow);
+            renderSupportTicketTable();
+
+            // Scroll to bottom of table
+            const tbody = document.getElementById('supportTicketTbody');
+            if (tbody) {
+                tbody.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        };
+
+        // Delete a row
+        window.deleteSupportTicketRow = function (rowIndex) {
+            if (rowIndex >= 0 && rowIndex < supportTicketRows.length) {
+                Swal.fire({
+                    title: 'Delete Row?',
+                    text: 'This ticket entry will be removed.',
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#ef4444',
+                    confirmButtonText: 'Delete',
+                    cancelButtonText: 'Cancel'
+                }).then(result => {
+                    if (result.isConfirmed) {
+                        supportTicketRows.splice(rowIndex, 1);
+                        renderSupportTicketTable();
+                        showToast('Row deleted', 'info');
+                    }
+                });
+            }
+        };
+
+        // Save support ticket data to Supabase
+        window.saveSupportTicketData = async function () {
+            const weekStart = document.getElementById('supportTicketWeekStart')?.value;
+            if (!weekStart) {
+                showToast('Please select a week first', 'warning');
+                return;
+            }
+
+            showAppLoader();
+
+            try {
+                // Save to localStorage as backup
+                localStorage.setItem(getSupportTicketStorageKey(weekStart), JSON.stringify({
+                    rows: supportTicketRows,
+                    columns: supportTicketColumns,
+                    savedAt: new Date().toISOString()
+                }));
+
+                // Save to Supabase
+                if (currentUser) {
+                    // First, delete existing entries for this week
+                    await supabaseClient
+                        .from('support_tickets')
+                        .delete()
+                        .eq('user_id', currentUser.id)
+                        .eq('week_start', weekStart);
+
+                    // Insert new entries — including the computed total
+                    const rowsToInsert = supportTicketRows
+                        .filter(row => row.ticket && row.ticket.trim()) // Only save rows with ticket IDs
+                        .map((row, index) => {
+                            // Compute the total for this row
+                            const computedTotal =
+                                (parseFloat(row.sme_dev) || 0) +
+                                (parseFloat(row.dev_advocate) || 0) +
+                                (parseFloat(row.delivery) || 0) +
+                                (parseFloat(row.apo) || 0);
+
+                            return {
+                                user_id: currentUser.id,
+                                week_start: weekStart,
+                                ticket: row.ticket || '',
+                                sme_dev: parseFloat(row.sme_dev) || 0,
+                                dev_advocate: parseFloat(row.dev_advocate) || 0,
+                                delivery: parseFloat(row.delivery) || 0,
+                                apo: parseFloat(row.apo) || 0,
+                                type: row.type || '',
+                                priority: row.priority || '',
+                                status: row.status || '',
+                                total: computedTotal,           // <-- NOW SAVED
+                                row_order: index,
+                                columns_config: supportTicketColumns
+                            };
+                        });
+
+                    if (rowsToInsert.length > 0) {
+                        const { error } = await supabaseClient
+                            .from('support_tickets')
+                            .insert(rowsToInsert);
+
+                        if (error) throw error;
+                    }
+                }
+
+                showToast('Support tickets saved!', 'success');
+            } catch (error) {
+                console.error('Save error:', error);
+                showToast('Saved locally. Supabase error: ' + (error.message || 'unknown'), 'warning');
+            } finally {
+                hideAppLoader();
+            }
+        };
+        // Copy previous week's tickets
+        window.copyPreviousWeekTickets = async function () {
+            const currentWeekStart = document.getElementById('supportTicketWeekStart')?.value;
+            if (!currentWeekStart) {
+                showToast('Please select a week first', 'warning');
+                return;
+            }
+
+            // Calculate previous week
+            const currentDate = new Date(currentWeekStart);
+            const previousWeekDate = new Date(currentDate);
+            previousWeekDate.setDate(currentDate.getDate() - 7);
+            const previousWeekStart = previousWeekDate.toISOString().split('T')[0];
+
+            try {
+                // Try Supabase first
+                if (currentUser) {
+                    const { data, error } = await supabaseClient
+                        .from('support_tickets')
+                        .select('*')
+                        .eq('user_id', currentUser.id)
+                        .eq('week_start', previousWeekStart)
+                        .order('row_order', { ascending: true });
+
+                    if (!error && data && data.length > 0) {
+                        supportTicketRows = data.map(row => ({
+                            id: generateId(),
+                            ticket: row.ticket,
+                            sme_dev: row.sme_dev,
+                            dev_advocate: row.dev_advocate,
+                            delivery: row.delivery,
+                            apo: row.apo,
+                            type: row.type,
+                            priority: row.priority,
+                            status: row.status
+                        }));
+                        renderSupportTicketTable();
+                        showToast('Copied tickets from previous week', 'success');
+                        return;
+                    }
+                }
+
+                // Fallback to localStorage
+                const stored = localStorage.getItem(getSupportTicketStorageKey(previousWeekStart));
+                if (stored) {
+                    const parsed = JSON.parse(stored);
+                    if (parsed.rows && parsed.rows.length > 0) {
+                        supportTicketRows = parsed.rows.map(row => ({
+                            ...row,
+                            id: generateId(),
+                            status: '' // Reset status for new week
+                        }));
+                        renderSupportTicketTable();
+                        showToast('Copied tickets from previous week', 'success');
+                        return;
+                    }
+                }
+
+                showToast('No tickets found for previous week', 'info');
+            } catch (error) {
+                console.error('Copy error:', error);
+                showToast('Could not copy previous week tickets', 'error');
+            }
+        };
+
+        // Open column manager modal
+        window.openColumnManager = function () {
+            const columnOptions = [
+                { id: 'ticket', label: 'Ticket', type: 'text' },
+                { id: 'sme_dev', label: 'SME /dev', type: 'number' },
+                { id: 'dev_advocate', label: 'Dev Advocate', type: 'number' },
+                { id: 'delivery', label: 'Delivery', type: 'number' },
+                { id: 'apo', label: "APO's", type: 'number' },
+                { id: 'type', label: 'Type', type: 'select', options: ['API', 'Android SDK', 'IOS SDK', 'ARCHITECTURE', 'WEB', 'DATABASE', 'DEVOPS', 'OTHER'] },
+                { id: 'priority', label: 'Priority', type: 'select', options: ['Major', 'Medium', 'Low', 'Critical', 'Blocker'] },
+                { id: 'status', label: 'STATUS', type: 'select', options: ['DONE', 'OPEN', 'SUSPENDED', 'IN PROGRESS', 'BLOCKED', 'CLOSED'] },
+                { id: 'custom_text', label: 'Custom Text', type: 'text' },
+                { id: 'custom_number', label: 'Custom Number', type: 'number' },
+                { id: 'custom_select', label: 'Custom Select', type: 'select', options: ['Option 1', 'Option 2', 'Option 3'] }
+            ];
+
+            const activeColumnIds = supportTicketColumns.map(c => c.id);
+
+            let html = '<div style="text-align:left; max-height:400px; overflow-y:auto;">';
+            html += '<p style="font-size:13px; color:#6b7280; margin-bottom:12px;">Check columns to show. Drag to reorder (coming soon).</p>';
+
+            columnOptions.forEach(col => {
+                const isActive = activeColumnIds.includes(col.id);
+                html += `
+            <label style="display:flex; align-items:center; gap:8px; padding:8px; border-radius:6px; margin-bottom:4px; background:${isActive ? '#eef2ff' : '#f9fafb'}; cursor:pointer;">
+                <input type="checkbox" ${isActive ? 'checked' : ''} onchange="toggleSupportColumn('${col.id}', '${col.label}', '${col.type}', this.checked)" />
+                <span style="font-size:14px; font-weight:${isActive ? '600' : '400'};">${col.label}</span>
+                <span style="font-size:11px; color:#9ca3af; margin-left:auto;">${col.type}</span>
+            </label>
+        `;
+            });
+
+            html += '</div>';
+
+            Swal.fire({
+                title: '📊 Manage Columns',
+                html: html,
+                showCancelButton: true,
+                confirmButtonText: 'Done',
+                cancelButtonText: 'Cancel',
+                width: 500
+            });
+        };
+
+        // Toggle a support column
+        window.toggleSupportColumn = function (colId, label, type, isActive) {
+            if (isActive) {
+                // Add column if not exists
+                if (!supportTicketColumns.find(c => c.id === colId)) {
+                    const newCol = {
+                        id: colId,
+                        label: label,
+                        type: type,
+                        width: type === 'number' ? '80px' : '120px',
+                        editable: type !== 'calculated'
+                    };
+
+                    // Add options for select types
+                    if (type === 'select') {
+                        newCol.options = ['Option 1', 'Option 2', 'Option 3'];
+                    }
+
+                    // Insert before the last column (total) if it exists, otherwise at end
+                    const totalIndex = supportTicketColumns.findIndex(c => c.type === 'calculated');
+                    if (totalIndex >= 0) {
+                        supportTicketColumns.splice(totalIndex, 0, newCol);
+                    } else {
+                        supportTicketColumns.push(newCol);
+                    }
+
+                    // Initialize new column in all rows
+                    supportTicketRows.forEach(row => {
+                        if (row[colId] === undefined) {
+                            row[colId] = '';
+                        }
+                    });
+                }
+            } else {
+                // Remove column (but keep the first column)
+                if (colId !== 'ticket') {
+                    supportTicketColumns = supportTicketColumns.filter(c => c.id !== colId);
+                }
+            }
+
+            renderSupportTicketTable();
+        };
+
+        // Export to Excel
+        window.exportSupportTicketsToExcel = function () {
+            if (supportTicketRows.length === 0) {
+                showToast('No data to export', 'info');
+                return;
+            }
+
+            // Build CSV content
+            const headers = supportTicketColumns.map(col => col.label);
+            headers.push('Total'); // Add total column
+
+            const rows = supportTicketRows.map(row => {
+                const rowData = supportTicketColumns.map(col => {
+                    if (col.type === 'calculated' && col.calculate) {
+                        return col.calculate(row) || 0;
+                    }
+                    return row[col.id] || '';
+                });
+
+                // Calculate total
+                const total = (parseFloat(row.sme_dev) || 0) +
+                    (parseFloat(row.dev_advocate) || 0) +
+                    (parseFloat(row.delivery) || 0) +
+                    (parseFloat(row.apo) || 0);
+                rowData.push(total);
+
+                return rowData;
+            });
+
+            // Add totals row
+            const totalsRow = supportTicketColumns.map(col => {
+                if (col.type === 'number' || col.type === 'calculated') {
+                    return supportTicketRows.reduce((sum, row) => {
+                        if (col.type === 'calculated' && col.calculate) {
+                            return sum + (col.calculate(row) || 0);
+                        }
+                        return sum + (parseFloat(row[col.id]) || 0);
+                    }, 0);
+                }
+                if (col.isFirst) return 'Total';
+                return '';
+            });
+            const grandTotal = supportTicketRows.reduce((sum, row) => {
+                return sum + (parseFloat(row.sme_dev) || 0) +
+                    (parseFloat(row.dev_advocate) || 0) +
+                    (parseFloat(row.delivery) || 0) +
+                    (parseFloat(row.apo) || 0);
+            }, 0);
+            totalsRow.push(grandTotal);
+
+            // Build CSV string
+            let csv = headers.join(',') + '\n';
+            rows.forEach(row => {
+                csv += row.map(cell => {
+                    const str = String(cell);
+                    // Escape commas and quotes
+                    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+                        return '"' + str.replace(/"/g, '""') + '"';
+                    }
+                    return str;
+                }).join(',') + '\n';
+            });
+            csv += totalsRow.map(cell => {
+                const str = String(cell);
+                if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+                    return '"' + str.replace(/"/g, '""') + '"';
+                }
+                return str;
+            }).join(',');
+
+            // Create and download file
+            const weekStart = document.getElementById('supportTicketWeekStart')?.value || new Date().toISOString().split('T')[0];
+            const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Support_Tickets_${weekStart}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            showToast('Excel file downloaded!', 'success');
+        };
+
+        // Initialize support ticket tracker when planner page is shown
+        // Add this to the navigateTo function or call it after page load
+        document.addEventListener('DOMContentLoaded', function () {
+            // Initialize after a short delay to ensure DOM is ready
+            setTimeout(initSupportTicketTracker, 500);
+        });
+
+        function downloadBlob(blob, name) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a'); link.href = url; link.download = name; document.body.appendChild(link); link.click(); link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+
+        document.addEventListener('DOMContentLoaded', initDocumentStudio);
+        document.addEventListener('DOMContentLoaded', restoreCollapsibleCards);
+
+        // ──────────────────────────────────────────────────────────────
+        // 31. INIT
+        // ──────────────────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', initApp);
+        window.__supabase = supabaseClient;
+        console.log('🚀 DevAdvocate Hub v2.2 - Mobile: dropdown from top, sidebar hidden on phones');
+        console.log('📌 Press ? for keyboard shortcuts');
+        console.log('💡 Tap the hamburger on mobile for the full menu dropdown.');
+        console.log('🖌️ Whiteboard: draw, undo, save, export PNG, fullscreen.');
+        console.log('✏️ Work Timer: click "Edit" next to the start time to adjust it while running or paused.');
